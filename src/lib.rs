@@ -1,5 +1,7 @@
-use std::env;
-use std::io::{self, stdin, stdout, Write};
+use std::io::{self, stdin, stdout, BufRead, BufReader, Write};
+use std::process::{Command, Stdio};
+use std::sync::mpsc::{channel, Sender};
+use std::{env, thread};
 
 use termion::event::{Event, Key, MouseEvent};
 use termion::input::{MouseTerminal, TermRead};
@@ -13,16 +15,76 @@ use termion::{clear, color, cursor, style};
 pub struct Tile {
     /// The command that should be executed in the tile.
     pub command: Vec<String>,
+
+    /// Content of the command's stdout and stderr.
+    ///
+    /// We put both stdout and stderr here to avoid dealing with order between stdout and stderr.
+    pub stdout: Vec<String>,
 }
 
 impl Tile {
     /// Creates a new empty tile.
-    pub fn new(command: &[String]) -> Tile {
+    pub fn new(command: &[String], i: u16, j: u16, sender: Sender<Msg>) -> Tile {
+        let command = command
+            .into_iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<_>>();
+
+        let clone = command.clone();
+
+        thread::spawn(move || {
+            let mut child = Command::new(&clone[0])
+                .args(&clone[1..])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+
+            let stdout = child.stdout.take().unwrap();
+            let reader = BufReader::new(stdout);
+
+            let mut lines = reader.lines();
+
+            loop {
+                match lines.next() {
+                    Some(Ok(line)) => {
+                        sender.send(Msg::Stdout(i, j, line)).unwrap();
+                    }
+
+                    Some(Err(_)) => {
+                        break;
+                    }
+
+                    None => break,
+                }
+            }
+
+            sender.send(Msg::Stdout(i, j, String::new())).unwrap();
+
+            let code = child.wait().unwrap().code().unwrap();
+
+            let exit_string = format!(
+                "{}{}Command exited with return code {}{}{}",
+                style::Bold,
+                if code == 0 {
+                    color::Green.fg_str()
+                } else {
+                    color::Red.fg_str()
+                },
+                code,
+                style::Reset,
+                color::Reset.fg_str()
+            );
+
+            sender.send(Msg::Stdout(i, j, exit_string)).unwrap();
+        });
+
         Tile {
             command: command
                 .into_iter()
                 .map(|x| x.to_string())
                 .collect::<Vec<_>>(),
+            stdout: vec![],
         }
     }
 }
@@ -64,6 +126,11 @@ impl<W: Write> Multiview<W> {
     /// Helper to easily access a tile.
     pub fn tile(&self, (i, j): (u16, u16)) -> &Tile {
         &self.tiles[i as usize][j as usize]
+    }
+
+    /// Helper to easily access a mut tile.
+    pub fn tile_mut(&mut self, (i, j): (u16, u16)) -> &mut Tile {
+        &mut self.tiles[i as usize][j as usize]
     }
 
     /// Sets the selected tile from (x, y) coordinates.
@@ -129,6 +196,15 @@ impl<W: Write> Multiview<W> {
         write!(self.stdout, "{}┤", cursor::Goto(x2, y1 + 2))?;
 
         let tile = &self.tile((i, j));
+        let command_str = tile.command.join(" ");
+
+        // TODO: find a way to avoid this copy
+        let lines = tile
+            .stdout
+            .iter()
+            .map(|x| x.to_string())
+            .enumerate()
+            .collect::<Vec<_>>();
 
         write!(
             self.stdout,
@@ -136,9 +212,18 @@ impl<W: Write> Multiview<W> {
             color::Reset.fg_str(),
             cursor::Goto(x1 + 1, y1 + 1),
             style::Bold,
-            tile.command.join(" "),
+            command_str,
             style::Reset,
         )?;
+
+        for (line_index, line) in lines {
+            write!(
+                self.stdout,
+                "{}{}",
+                cursor::Goto(x1 + 2, y1 + 3 + line_index as u16),
+                line
+            )?;
+        }
 
         Ok(())
     }
@@ -165,14 +250,34 @@ impl<W: Write> Drop for Multiview<W> {
     }
 }
 
+/// An event that can be sent in channels.
+pub enum Msg {
+    /// An stdout line arrived.
+    Stdout(u16, u16, String),
+
+    /// A click occured.
+    Click(u16, u16),
+
+    /// The program was asked to exit.
+    Exit,
+}
+
 /// Starts the multiview application.
 pub fn main() -> io::Result<()> {
+    let (sender, receiver) = channel();
+
     let args = env::args().skip(1).collect::<Vec<_>>();
 
     let tiles = args
         .split(|x| x == "//")
-        .map(|x| x.split(|y| y == "::").map(Tile::new))
-        .map(|x| x.collect::<Vec<_>>())
+        .map(|x| x.split(|y| y == "::").enumerate().collect::<Vec<_>>())
+        .enumerate()
+        .map(|(i, tiles)| {
+            tiles
+                .into_iter()
+                .map(|(j, tile)| Tile::new(tile, i as u16, j as u16, sender.clone()))
+                .collect::<Vec<_>>()
+        })
         .collect::<Vec<_>>();
 
     let stdin = stdin();
@@ -185,17 +290,28 @@ pub fn main() -> io::Result<()> {
     let mut multiview = Multiview::new(stdout, tiles)?;
     multiview.render(term_size)?;
 
-    for c in stdin.events() {
-        let evt = c?;
-        match evt {
-            Event::Key(Key::Char('q')) => break,
+    thread::spawn(move || {
+        for c in stdin.events() {
+            let evt = c.unwrap();
+            match evt {
+                Event::Key(Key::Char('q')) => sender.send(Msg::Exit).unwrap(),
 
-            Event::Mouse(me) => match me {
-                MouseEvent::Press(_, x, y) => multiview.select_tile((x, y), term_size),
-                _ => (),
-            },
+                Event::Mouse(me) => match me {
+                    MouseEvent::Press(_, x, y) => sender.send(Msg::Click(x, y)).unwrap(),
+                    _ => (),
+                },
 
-            _ => {}
+                _ => {}
+            }
+        }
+    });
+
+    loop {
+        match receiver.recv() {
+            Ok(Msg::Stdout(i, j, line)) => multiview.tile_mut((i, j)).stdout.push(line),
+            Ok(Msg::Click(x, y)) => multiview.select_tile((x, y), term_size),
+            Ok(Msg::Exit) => break,
+            Err(_) => (),
         }
 
         multiview.render(term_size)?;
