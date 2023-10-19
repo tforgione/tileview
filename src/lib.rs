@@ -10,6 +10,123 @@ use termion::screen::IntoAlternateScreen;
 use termion::terminal_size;
 use termion::{clear, color, cursor, style};
 
+/// Returns the length of a string containing colors and styles.
+pub fn str_len(s: &str) -> u16 {
+    let mut count = 0;
+    let mut counting = true;
+    let mut iter = s.chars().peekable();
+
+    loop {
+        let current = match iter.next() {
+            Some(c) => c,
+            None => break,
+        };
+
+        let next = iter.peek();
+
+        if current == '\x1b' && next == Some(&'[') {
+            counting = false;
+        }
+
+        if counting {
+            count += 1;
+        }
+
+        if current == 'm' {
+            counting = true;
+        }
+    }
+
+    count
+}
+
+/// Returns a substring of a string containing colors and styles.
+pub fn sub_str<'a>(s: &'a str, start: u16, end: u16) -> &'a str {
+    let mut counting = true;
+    let mut iter = s.chars().peekable();
+
+    // Find the start
+    let mut real_start = 0;
+    let mut logical_start = 0;
+    loop {
+        if logical_start == start {
+            break;
+        }
+
+        let current = match iter.next() {
+            Some(c) => c,
+            None => break,
+        };
+
+        let next = iter.peek();
+
+        if current == '\x1b' && next == Some(&'[') {
+            counting = false;
+        }
+
+        real_start += 1;
+        if counting {
+            logical_start += 1;
+        }
+
+        if current == 'm' {
+            counting = true;
+        }
+    }
+
+    // Find the end
+    let mut real_end = real_start;
+    let mut logical_end = logical_start;
+    loop {
+        if logical_end == end {
+            break;
+        }
+
+        let current = match iter.next() {
+            Some(c) => c,
+            None => break,
+        };
+
+        let next = iter.peek();
+
+        if current == '\x1b' && next == Some(&'[') {
+            counting = false;
+        }
+
+        if counting {
+            logical_end += 1;
+        }
+        real_end += 1;
+
+        if current == 'm' {
+            counting = true;
+        }
+    }
+
+    eprintln!("{} {}", real_start, real_end);
+    &s[real_start..real_end]
+}
+
+#[cfg(test)]
+mod test {
+    use termion::color;
+
+    use crate::str_len;
+
+    #[test]
+    fn test_str_len_1() {
+        let string = format!(
+            "{}Hello{} {}World{}",
+            color::Red.fg_str(),
+            color::Reset.fg_str(),
+            color::Green.fg_str(),
+            color::Reset.fg_str(),
+        );
+
+        assert_eq!(str_len(&string), 11);
+    }
+}
+
 /// A tile with a command running inside it.
 #[derive(Debug)]
 pub struct Tile {
@@ -203,8 +320,15 @@ impl<W: Write> Multiview<W> {
             .stdout
             .iter()
             .map(|x| x.to_string())
-            .enumerate()
             .collect::<Vec<_>>();
+
+        let max_title_len = term_size.0 - 4 - "Command: ".len() as u16;
+
+        let command_str = if str_len(&command_str) > max_title_len {
+            format!("{}...", sub_str(&command_str, 0, max_title_len - 3))
+        } else {
+            command_str
+        };
 
         write!(
             self.stdout,
@@ -216,13 +340,32 @@ impl<W: Write> Multiview<W> {
             style::Reset,
         )?;
 
-        for (line_index, line) in lines {
-            write!(
-                self.stdout,
-                "{}{}",
-                cursor::Goto(x1 + 2, y1 + 3 + line_index as u16),
-                line
-            )?;
+        let mut line_index = 0;
+        for line in lines {
+            let mut len = str_len(&line) as i32;
+            let mut current_char_index = 0;
+
+            if len == 0 {
+                line_index += 1;
+                continue;
+            }
+
+            while len > 0 {
+                write!(
+                    self.stdout,
+                    "{}{}",
+                    cursor::Goto(x1 + 2, y1 + 3 + line_index as u16),
+                    sub_str(
+                        &line,
+                        current_char_index,
+                        current_char_index + term_size.0 - 4
+                    ),
+                )?;
+
+                line_index += 1;
+                len -= (term_size.0 - 4) as i32;
+                current_char_index += term_size.0 - 4;
+            }
         }
 
         Ok(())
