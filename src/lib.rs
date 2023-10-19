@@ -103,7 +103,6 @@ pub fn sub_str<'a>(s: &'a str, start: u16, end: u16) -> &'a str {
         }
     }
 
-    eprintln!("{} {}", real_start, real_end);
     &s[real_start..real_end]
 }
 
@@ -300,18 +299,6 @@ impl<W: Write> Multiview<W> {
         let x2 = (j + 1) * w;
         let y2 = (i + 1) * h;
 
-        if self.selected == (i, j) {
-            write!(self.stdout, "{}", color::Green.fg_str())?;
-        }
-        self.rect((x1, y1), (x2, y2))?;
-        write!(self.stdout, "{}├", cursor::Goto(x1, y1 + 2))?;
-
-        for _ in (x1 + 1)..x2 {
-            write!(self.stdout, "─")?;
-        }
-
-        write!(self.stdout, "{}┤", cursor::Goto(x2, y1 + 2))?;
-
         let tile = &self.tile((i, j));
         let command_str = tile.command.join(" ");
 
@@ -351,22 +338,42 @@ impl<W: Write> Multiview<W> {
             }
 
             while len > 0 {
+                let sub = sub_str(
+                    &line,
+                    current_char_index,
+                    current_char_index + term_size.0 - 4,
+                );
                 write!(
                     self.stdout,
                     "{}{}",
                     cursor::Goto(x1 + 2, y1 + 3 + line_index as u16),
-                    sub_str(
-                        &line,
-                        current_char_index,
-                        current_char_index + term_size.0 - 4
+                    sub.replace(
+                        "\r",
+                        &format!("{}", cursor::Goto(x1 + 2, y1 + 3 + line_index as u16))
                     ),
                 )?;
+
+                // if sub.contains(|x| x == '\r') {
+                //     line_index -= 1;
+                // }
 
                 line_index += 1;
                 len -= (term_size.0 - 4) as i32;
                 current_char_index += term_size.0 - 4;
             }
         }
+
+        if self.selected == (i, j) {
+            write!(self.stdout, "{}", color::Green.fg_str())?;
+        }
+        self.rect((x1, y1), (x2, y2))?;
+        write!(self.stdout, "{}├", cursor::Goto(x1, y1 + 2))?;
+
+        for _ in (x1 + 1)..x2 {
+            write!(self.stdout, "─")?;
+        }
+
+        write!(self.stdout, "{}┤", cursor::Goto(x2, y1 + 2))?;
 
         Ok(())
     }
