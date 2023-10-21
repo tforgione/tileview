@@ -1,7 +1,10 @@
-use std::io::{self, stdin, stdout, BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
+use std::io::{self, stdin, stdout, Read, Write};
+use std::process::Stdio;
 use std::sync::mpsc::{channel, Sender};
 use std::{env, thread};
+
+use pty_process::blocking::Command;
+use pty_process::blocking::Pty;
 
 use termion::event::{Event, Key, MouseEvent};
 use termion::input::{MouseTerminal, TermRead};
@@ -136,73 +139,103 @@ pub struct Tile {
     ///
     /// We put both stdout and stderr here to avoid dealing with order between stdout and stderr.
     pub stdout: Vec<String>,
+
+    /// The sender for the communication with the multiview.
+    pub sender: Sender<Msg>,
+
+    /// Coordinates of the tile.
+    pub coords: (u16, u16),
 }
 
 impl Tile {
     /// Creates a new empty tile.
     pub fn new(command: &[String], i: u16, j: u16, sender: Sender<Msg>) -> Tile {
-        let command = command
-            .into_iter()
+        Tile {
+            command: command
+                .into_iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>(),
+            stdout: vec![],
+            sender,
+            coords: (i, j),
+        }
+    }
+
+    /// Starts the commands.
+    pub fn start(&mut self, width: u16, height: u16) {
+        let command = self
+            .command
+            .iter()
             .map(|x| x.to_string())
             .collect::<Vec<_>>();
 
+        let coords = self.coords;
         let clone = command.clone();
+        let sender = self.sender.clone();
 
         thread::spawn(move || {
+            let pty = Pty::new().unwrap();
+            pty.resize(pty_process::Size::new(height - 4, width - 4))
+                .unwrap();
+
             let mut child = Command::new(&clone[0])
                 .args(&clone[1..])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .spawn()
+                .spawn(&pty.pts().unwrap())
                 .unwrap();
 
-            let stdout = child.stdout.take().unwrap();
-
-            let stderr = child.stderr.take().unwrap();
+            let mut stdout = child.stdout.take().unwrap();
+            let mut stderr = child.stderr.take().unwrap();
             let stderr_sender = sender.clone();
 
-            thread::spawn(move || {
-                let reader = BufReader::new(stderr);
-                let mut lines = reader.lines();
+            let coords = coords;
 
-                loop {
-                    match lines.next() {
-                        Some(Ok(line)) => {
-                            stderr_sender.send(Msg::Stderr(i, j, line)).unwrap();
-                        }
+            thread::spawn(move || loop {
+                let mut buffer = [0; 256];
+                let result = stderr.read(&mut buffer);
 
-                        Some(Err(_)) => {
-                            break;
-                        }
+                match result {
+                    Ok(0) => break,
 
-                        None => break,
+                    Ok(n) => {
+                        stderr_sender
+                            .send(Msg::Stderr(
+                                coords.0,
+                                coords.1,
+                                String::from_utf8_lossy(&buffer[0..n]).to_string(),
+                            ))
+                            .unwrap();
                     }
-                }
 
-                stderr_sender
-                    .send(Msg::Stdout(i, j, String::new()))
-                    .unwrap();
+                    Err(_) => break,
+                }
             });
 
-            let reader = BufReader::new(stdout);
-
-            let mut lines = reader.lines();
-
             loop {
-                match lines.next() {
-                    Some(Ok(line)) => {
-                        sender.send(Msg::Stdout(i, j, line)).unwrap();
+                let mut buffer = [0; 256];
+                let result = stdout.read(&mut buffer);
+
+                match result {
+                    Ok(0) => break,
+
+                    Ok(n) => {
+                        sender
+                            .send(Msg::Stderr(
+                                coords.0,
+                                coords.1,
+                                String::from_utf8_lossy(&buffer[0..n]).to_string(),
+                            ))
+                            .unwrap();
                     }
 
-                    Some(Err(_)) => {
-                        break;
-                    }
-
-                    None => break,
+                    Err(_) => break,
                 }
             }
 
-            sender.send(Msg::Stdout(i, j, String::new())).unwrap();
+            sender
+                .send(Msg::Stdout(coords.0, coords.1, String::new()))
+                .unwrap();
 
             let code = child.wait().unwrap().code().unwrap();
 
@@ -219,16 +252,10 @@ impl Tile {
                 color::Reset.fg_str()
             );
 
-            sender.send(Msg::Stdout(i, j, exit_string)).unwrap();
+            sender
+                .send(Msg::Stdout(coords.0, coords.1, exit_string))
+                .unwrap();
         });
-
-        Tile {
-            command: command
-                .into_iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<_>>(),
-            stdout: vec![],
-        }
     }
 }
 
@@ -346,47 +373,66 @@ impl<W: Write> Multiview<W> {
 
         write!(
             self.stdout,
-            "{}{} {}Command: {}{}",
+            "{}{} {}Command: {}{}{}",
             color::Reset.fg_str(),
             cursor::Goto(x1 + 1, y1 + 1),
             style::Bold,
             command_str,
             style::Reset,
+            cursor::Goto(x1 + 2, y1 + 3),
         )?;
 
+        let mut counting = true;
         let mut line_index = 0;
+        let mut current_char_index = 0;
+
         for line in lines {
-            let mut len = str_len(&line) as i32;
-            let mut current_char_index = 0;
+            for c in line.chars() {
+                if c == '\x1b' {
+                    counting = false;
+                }
 
-            if len == 0 {
-                line_index += 1;
-                continue;
-            }
+                match c {
+                    '\n' => {
+                        line_index += 1;
+                        current_char_index = 0;
+                        write!(
+                            self.stdout,
+                            "{}",
+                            cursor::Goto(x1 + 2, y1 + 3 + line_index as u16)
+                        )?;
+                    }
 
-            while len > 0 {
-                let sub = sub_str(
-                    &line,
-                    current_char_index,
-                    current_char_index + term_size.0 - 4,
-                );
-                write!(
-                    self.stdout,
-                    "{}{}",
-                    cursor::Goto(x1 + 2, y1 + 3 + line_index as u16),
-                    sub.replace(
-                        "\r",
-                        &format!("{}", cursor::Goto(x1 + 2, y1 + 3 + line_index as u16))
-                    ),
-                )?;
+                    '\r' => {
+                        current_char_index = 0;
+                        write!(
+                            self.stdout,
+                            "{}",
+                            cursor::Goto(x1 + 2, y1 + 3 + line_index as u16)
+                        )?;
+                    }
 
-                // if sub.contains(|x| x == '\r') {
-                //     line_index -= 1;
-                // }
+                    _ => {
+                        if counting {
+                            current_char_index += 1;
+                        }
 
-                line_index += 1;
-                len -= (term_size.0 - 4) as i32;
-                current_char_index += term_size.0 - 4;
+                        if current_char_index == w - 3 {
+                            line_index += 1;
+                            current_char_index = 1;
+                            write!(
+                                self.stdout,
+                                "{}",
+                                cursor::Goto(x1 + 2, y1 + 3 + line_index as u16)
+                            )?;
+                        }
+                        write!(self.stdout, "{}", c)?;
+                    }
+                }
+
+                if c == 'm' {
+                    counting = true;
+                }
             }
         }
 
@@ -469,6 +515,17 @@ pub fn main() -> io::Result<()> {
 
     let mut multiview = Multiview::new(stdout, tiles)?;
     multiview.render(term_size)?;
+
+    let tile_size = (
+        term_size.0 / multiview.tiles[0].len() as u16,
+        term_size.1 / multiview.tiles.len() as u16,
+    );
+
+    for row in &mut multiview.tiles {
+        for tile in row {
+            tile.start(tile_size.0, tile_size.1);
+        }
+    }
 
     thread::spawn(move || {
         for c in stdin.events() {
