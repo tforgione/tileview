@@ -145,6 +145,12 @@ pub struct Tile {
 
     /// Coordinates of the tile.
     pub coords: (u16, u16),
+
+    /// The number of lines that the stdout is scrolled.
+    pub scroll: isize,
+
+    /// The number of lines that stdout will print.
+    pub max_scroll: isize,
 }
 
 impl Tile {
@@ -158,6 +164,8 @@ impl Tile {
             stdout: vec![],
             sender,
             coords: (i, j),
+            scroll: 0,
+            max_scroll: 0,
         }
     }
 
@@ -234,7 +242,7 @@ impl Tile {
             }
 
             sender
-                .send(Msg::Stdout(coords.0, coords.1, String::new()))
+                .send(Msg::Stdout(coords.0, coords.1, String::from("\n")))
                 .unwrap();
 
             let code = child.wait().unwrap().code().unwrap();
@@ -312,38 +320,35 @@ impl<W: Write> Multiview<W> {
     }
 
     /// Draws a box from (x1, y1) to (x2, y2).
-    pub fn rect(&mut self, (x1, y1): (u16, u16), (x2, y2): (u16, u16)) -> io::Result<()> {
-        write!(self.stdout, "{}┌", cursor::Goto(x1, y1))?;
+    pub fn rect(&mut self, (x1, y1): (u16, u16), (x2, y2): (u16, u16)) -> String {
+        let mut buffer = vec![];
+
+        buffer.push(format!("{}┌", cursor::Goto(x1, y1)));
 
         for _ in (x1 + 1)..x2 {
-            write!(self.stdout, "─")?;
+            buffer.push(format!("─"));
         }
 
-        write!(self.stdout, "┐")?;
+        buffer.push(format!("┐"));
 
         for y in (y1 + 1)..y2 {
-            write!(self.stdout, "{}│", cursor::Goto(x1, y))?;
-            write!(self.stdout, "{}│", cursor::Goto(x2, y))?;
+            buffer.push(format!("{}│", cursor::Goto(x1, y)));
+            buffer.push(format!("{}│", cursor::Goto(x2, y)));
         }
 
-        write!(self.stdout, "{}└", cursor::Goto(x1, y2))?;
+        buffer.push(format!("{}└", cursor::Goto(x1, y2)));
 
         for _ in (x1 + 1)..x2 {
-            write!(self.stdout, "─")?;
+            buffer.push(format!("─"));
         }
 
-        write!(self.stdout, "┘")?;
+        buffer.push(format!("┘"));
 
-        Ok(())
-    }
-
-    /// Clears stdout.
-    pub fn clear(&mut self) -> io::Result<()> {
-        write!(self.stdout, "{}", clear::All)
+        buffer.join("")
     }
 
     /// Renders the (x, y) tile.
-    pub fn render_tile(&mut self, (i, j): (u16, u16), term_size: (u16, u16)) -> io::Result<()> {
+    pub fn render_tile(&mut self, (i, j): (u16, u16), term_size: (u16, u16)) -> String {
         let w = term_size.0 / self.tiles[0].len() as u16;
         let h = term_size.1 / self.tiles.len() as u16;
 
@@ -355,6 +360,8 @@ impl<W: Write> Multiview<W> {
 
         let tile = &self.tile((i, j));
         let command_str = tile.command.join(" ");
+
+        let mut buffer = vec![];
 
         // TODO: find a way to avoid this copy
         let lines = tile
@@ -371,8 +378,12 @@ impl<W: Write> Multiview<W> {
             command_str
         };
 
-        write!(
-            self.stdout,
+        let mut counting = true;
+        let mut line_index = 0;
+        let mut current_char_index = 0;
+        let scroll = tile.scroll as u16;
+
+        buffer.push(format!(
             "{}{} {}Command: {}{}{}",
             color::Reset.fg_str(),
             cursor::Goto(x1 + 1, y1 + 1),
@@ -380,11 +391,7 @@ impl<W: Write> Multiview<W> {
             command_str,
             style::Reset,
             cursor::Goto(x1 + 2, y1 + 3),
-        )?;
-
-        let mut counting = true;
-        let mut line_index = 0;
-        let mut current_char_index = 0;
+        ));
 
         for line in lines {
             for c in line.chars() {
@@ -396,20 +403,32 @@ impl<W: Write> Multiview<W> {
                     '\n' => {
                         line_index += 1;
                         current_char_index = 0;
-                        write!(
-                            self.stdout,
-                            "{}",
-                            cursor::Goto(x1 + 2, y1 + 3 + line_index as u16)
-                        )?;
+
+                        if line_index >= scroll && line_index < h + scroll {
+                            if current_char_index < w {
+                                let mut spaces = String::new();
+                                for _ in 0..w - current_char_index {
+                                    spaces.push(' ');
+                                }
+                                buffer.push(spaces);
+                            }
+
+                            buffer.push(format!(
+                                "{}",
+                                cursor::Goto(x1 + 2, y1 + 3 + line_index as u16 - scroll)
+                            ));
+                        }
                     }
 
                     '\r' => {
                         current_char_index = 0;
-                        write!(
-                            self.stdout,
-                            "{}",
-                            cursor::Goto(x1 + 2, y1 + 3 + line_index as u16)
-                        )?;
+
+                        if line_index >= scroll && line_index < h + scroll {
+                            buffer.push(format!(
+                                "{}",
+                                cursor::Goto(x1 + 2, y1 + 3 + line_index as u16 - scroll)
+                            ));
+                        }
                     }
 
                     _ => {
@@ -420,13 +439,18 @@ impl<W: Write> Multiview<W> {
                         if current_char_index == w - 3 {
                             line_index += 1;
                             current_char_index = 1;
-                            write!(
-                                self.stdout,
-                                "{}",
-                                cursor::Goto(x1 + 2, y1 + 3 + line_index as u16)
-                            )?;
+
+                            if line_index >= scroll && line_index < h + scroll {
+                                buffer.push(format!(
+                                    "{}",
+                                    cursor::Goto(x1 + 2, y1 + 3 + line_index as u16 - scroll)
+                                ));
+                            }
                         }
-                        write!(self.stdout, "{}", c)?;
+
+                        if line_index >= scroll && line_index < h + scroll {
+                            buffer.push(format!("{}", c));
+                        }
                     }
                 }
 
@@ -436,34 +460,56 @@ impl<W: Write> Multiview<W> {
             }
         }
 
-        if self.selected == (i, j) {
-            write!(self.stdout, "{}", color::Green.fg_str())?;
+        let tile = self.tile_mut((i, j));
+        if tile.max_scroll != line_index as isize {
+            tile.max_scroll = line_index as isize;
+            tile.scroll = tile.max_scroll - h as isize + 5;
+            if tile.scroll < 0 {
+                tile.scroll = 0;
+            }
         }
-        self.rect((x1, y1), (x2, y2))?;
-        write!(self.stdout, "{}├", cursor::Goto(x1, y1 + 2))?;
+
+        if self.selected == (i, j) {
+            buffer.push(format!("{}", color::Green.fg_str()));
+        }
+        buffer.push(self.rect((x1, y1), (x2, y2)));
+        buffer.push(format!("{}├", cursor::Goto(x1, y1 + 2)));
 
         for _ in (x1 + 1)..x2 {
-            write!(self.stdout, "─")?;
+            buffer.push(format!("─"));
         }
 
-        write!(self.stdout, "{}┤", cursor::Goto(x2, y1 + 2))?;
+        buffer.push(format!("{}┤", cursor::Goto(x2, y1 + 2)));
 
-        Ok(())
+        buffer.join("")
     }
 
     /// Renders all the tiles of the multiview.
     pub fn render(&mut self, term_size: (u16, u16)) -> io::Result<()> {
-        self.clear()?;
-
+        let mut buffer = vec![];
         for i in 0..self.tiles.len() {
             for j in 0..self.tiles[0].len() {
-                self.render_tile((i as u16, j as u16), term_size)?;
+                buffer.push(self.render_tile((i as u16, j as u16), term_size));
             }
         }
 
+        write!(self.stdout, "{}", buffer.join(""))?;
         self.stdout.flush()?;
 
         Ok(())
+    }
+
+    /// Scrolls down the current selected tile.
+    pub fn scroll_down(&mut self) {
+        self.tile_mut(self.selected).scroll += 1;
+    }
+
+    /// Scrolls up the current selected tile.
+    pub fn scroll_up(&mut self) {
+        let tile = self.tile_mut(self.selected);
+        if tile.scroll > 0 {
+            tile.scroll -= 1;
+        }
     }
 }
 
@@ -483,6 +529,12 @@ pub enum Msg {
 
     /// A click occured.
     Click(u16, u16),
+
+    /// Scroll up one line.
+    ScrollUp,
+
+    /// Scroll down one line.
+    ScrollDown,
 
     /// The program was asked to exit.
     Exit,
@@ -532,6 +584,8 @@ pub fn main() -> io::Result<()> {
             let evt = c.unwrap();
             match evt {
                 Event::Key(Key::Char('q')) => sender.send(Msg::Exit).unwrap(),
+                Event::Key(Key::Down) => sender.send(Msg::ScrollDown).unwrap(),
+                Event::Key(Key::Up) => sender.send(Msg::ScrollUp).unwrap(),
 
                 Event::Mouse(me) => match me {
                     MouseEvent::Press(_, x, y) => sender.send(Msg::Click(x, y)).unwrap(),
@@ -548,6 +602,8 @@ pub fn main() -> io::Result<()> {
             Ok(Msg::Stdout(i, j, line)) => multiview.tile_mut((i, j)).stdout.push(line),
             Ok(Msg::Stderr(i, j, line)) => multiview.tile_mut((i, j)).stdout.push(line),
             Ok(Msg::Click(x, y)) => multiview.select_tile((x, y), term_size),
+            Ok(Msg::ScrollDown) => multiview.scroll_down(),
+            Ok(Msg::ScrollUp) => multiview.scroll_up(),
             Ok(Msg::Exit) => break,
             Err(_) => (),
         }
