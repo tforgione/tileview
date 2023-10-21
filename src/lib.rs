@@ -157,6 +157,33 @@ impl Tile {
                 .unwrap();
 
             let stdout = child.stdout.take().unwrap();
+
+            let stderr = child.stderr.take().unwrap();
+            let stderr_sender = sender.clone();
+
+            thread::spawn(move || {
+                let reader = BufReader::new(stderr);
+                let mut lines = reader.lines();
+
+                loop {
+                    match lines.next() {
+                        Some(Ok(line)) => {
+                            stderr_sender.send(Msg::Stderr(i, j, line)).unwrap();
+                        }
+
+                        Some(Err(_)) => {
+                            break;
+                        }
+
+                        None => break,
+                    }
+                }
+
+                stderr_sender
+                    .send(Msg::Stdout(i, j, String::new()))
+                    .unwrap();
+            });
+
             let reader = BufReader::new(stdout);
 
             let mut lines = reader.lines();
@@ -405,6 +432,9 @@ pub enum Msg {
     /// An stdout line arrived.
     Stdout(u16, u16, String),
 
+    /// An stderr line arrived.
+    Stderr(u16, u16, String),
+
     /// A click occured.
     Click(u16, u16),
 
@@ -459,6 +489,7 @@ pub fn main() -> io::Result<()> {
     loop {
         match receiver.recv() {
             Ok(Msg::Stdout(i, j, line)) => multiview.tile_mut((i, j)).stdout.push(line),
+            Ok(Msg::Stderr(i, j, line)) => multiview.tile_mut((i, j)).stdout.push(line),
             Ok(Msg::Click(x, y)) => multiview.select_tile((x, y), term_size),
             Ok(Msg::Exit) => break,
             Err(_) => (),
