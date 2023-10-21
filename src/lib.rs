@@ -6,7 +6,7 @@ use std::{env, thread};
 use pty_process::blocking::Command;
 use pty_process::blocking::Pty;
 
-use termion::event::{Event, Key, MouseEvent};
+use termion::event::{Event, Key, MouseButton, MouseEvent};
 use termion::input::{MouseTerminal, TermRead};
 use termion::raw::IntoRawMode;
 use termion::screen::IntoAlternateScreen;
@@ -138,7 +138,15 @@ pub struct Tile {
     /// Content of the command's stdout and stderr.
     ///
     /// We put both stdout and stderr here to avoid dealing with order between stdout and stderr.
-    pub stdout: Vec<String>,
+    pub stdout: String,
+
+    /// The cursor where stdout should write.
+    ///
+    /// If None, stdout should push at the end of the string.
+    pub cursor: Option<usize>,
+
+    /// The number of chars in stdout.
+    pub len: usize,
 
     /// The sender for the communication with the multiview.
     pub sender: Sender<Msg>,
@@ -161,7 +169,9 @@ impl Tile {
                 .into_iter()
                 .map(|x| x.to_string())
                 .collect::<Vec<_>>(),
-            stdout: vec![],
+            stdout: String::new(),
+            len: 0,
+            cursor: None,
             sender,
             coords: (i, j),
             scroll: 0,
@@ -200,7 +210,7 @@ impl Tile {
             let coords = coords;
 
             thread::spawn(move || loop {
-                let mut buffer = [0; 256];
+                let mut buffer = [0; 4096];
                 let result = stderr.read(&mut buffer);
 
                 match result {
@@ -221,7 +231,7 @@ impl Tile {
             });
 
             loop {
-                let mut buffer = [0; 256];
+                let mut buffer = [0; 4096];
                 let result = stdout.read(&mut buffer);
 
                 match result {
@@ -248,7 +258,7 @@ impl Tile {
             let code = child.wait().unwrap().code().unwrap();
 
             let exit_string = format!(
-                "{}{}Command exited with return code {}{}{}",
+                "{}{}Command exited with return code {}{}\n",
                 style::Bold,
                 if code == 0 {
                     color::Green.fg_str()
@@ -257,7 +267,6 @@ impl Tile {
                 },
                 code,
                 style::Reset,
-                color::Reset.fg_str()
             );
 
             sender
@@ -277,6 +286,9 @@ struct Multiview<W: Write> {
 
     /// The coordinates of the selected tiles.
     pub selected: (u16, u16),
+
+    /// Whether we need to refresh the UI.
+    pub refresh_ui: bool,
 }
 
 impl<W: Write> Multiview<W> {
@@ -286,11 +298,12 @@ impl<W: Write> Multiview<W> {
             stdout,
             tiles,
             selected: (0, 0),
+            refresh_ui: true,
         };
 
         write!(
             multiview.stdout,
-            "{}{}{}┌",
+            "{}{}{}",
             clear::All,
             cursor::Hide,
             cursor::Goto(1, 1)
@@ -317,10 +330,11 @@ impl<W: Write> Multiview<W> {
         let h = term_size.1 / self.tiles.len() as u16;
 
         self.selected = (y / h, x / w);
+        self.refresh_ui = true;
     }
 
     /// Draws a box from (x1, y1) to (x2, y2).
-    pub fn rect(&mut self, (x1, y1): (u16, u16), (x2, y2): (u16, u16)) -> String {
+    pub fn rect(&self, (x1, y1): (u16, u16), (x2, y2): (u16, u16)) -> String {
         let mut buffer = vec![];
 
         buffer.push(format!("{}┌", cursor::Goto(x1, y1)));
@@ -347,8 +361,8 @@ impl<W: Write> Multiview<W> {
         buffer.join("")
     }
 
-    /// Renders the (x, y) tile.
-    pub fn render_tile(&mut self, (i, j): (u16, u16), term_size: (u16, u16)) -> String {
+    /// Renders the border and the title of a tile.
+    pub fn first_render_tile(&self, (i, j): (u16, u16), term_size: (u16, u16)) -> String {
         let w = term_size.0 / self.tiles[0].len() as u16;
         let h = term_size.1 / self.tiles.len() as u16;
 
@@ -363,25 +377,17 @@ impl<W: Write> Multiview<W> {
 
         let mut buffer = vec![];
 
-        // TODO: find a way to avoid this copy
-        let lines = tile
-            .stdout
-            .iter()
-            .map(|x| x.to_string())
-            .collect::<Vec<_>>();
+        let max_title_len =
+            (term_size.0 / self.tiles[0].len() as u16) - 4 - "Command: ".len() as u16;
 
-        let max_title_len = term_size.0 - 4 - "Command: ".len() as u16;
-
-        let command_str = if str_len(&command_str) > max_title_len {
-            format!("{}...", sub_str(&command_str, 0, max_title_len - 3))
+        let command_str = if command_str.len() > max_title_len as usize {
+            format!(
+                "{}...",
+                &command_str[0 as usize..max_title_len as usize - 3]
+            )
         } else {
             command_str
         };
-
-        let mut counting = true;
-        let mut line_index = 0;
-        let mut current_char_index = 0;
-        let scroll = tile.scroll as u16;
 
         buffer.push(format!(
             "{}{} {}Command: {}{}{}",
@@ -392,82 +398,6 @@ impl<W: Write> Multiview<W> {
             style::Reset,
             cursor::Goto(x1 + 2, y1 + 3),
         ));
-
-        for line in lines {
-            for c in line.chars() {
-                if c == '\x1b' {
-                    counting = false;
-                }
-
-                match c {
-                    '\n' => {
-                        line_index += 1;
-                        current_char_index = 0;
-
-                        if line_index >= scroll && line_index < h + scroll {
-                            if current_char_index < w {
-                                let mut spaces = String::new();
-                                for _ in 0..w - current_char_index {
-                                    spaces.push(' ');
-                                }
-                                buffer.push(spaces);
-                            }
-
-                            buffer.push(format!(
-                                "{}",
-                                cursor::Goto(x1 + 2, y1 + 3 + line_index as u16 - scroll)
-                            ));
-                        }
-                    }
-
-                    '\r' => {
-                        current_char_index = 0;
-
-                        if line_index >= scroll && line_index < h + scroll {
-                            buffer.push(format!(
-                                "{}",
-                                cursor::Goto(x1 + 2, y1 + 3 + line_index as u16 - scroll)
-                            ));
-                        }
-                    }
-
-                    _ => {
-                        if counting {
-                            current_char_index += 1;
-                        }
-
-                        if current_char_index == w - 3 {
-                            line_index += 1;
-                            current_char_index = 1;
-
-                            if line_index >= scroll && line_index < h + scroll {
-                                buffer.push(format!(
-                                    "{}",
-                                    cursor::Goto(x1 + 2, y1 + 3 + line_index as u16 - scroll)
-                                ));
-                            }
-                        }
-
-                        if line_index >= scroll && line_index < h + scroll {
-                            buffer.push(format!("{}", c));
-                        }
-                    }
-                }
-
-                if c == 'm' {
-                    counting = true;
-                }
-            }
-        }
-
-        let tile = self.tile_mut((i, j));
-        if tile.max_scroll != line_index as isize {
-            tile.max_scroll = line_index as isize;
-            tile.scroll = tile.max_scroll - h as isize + 5;
-            if tile.scroll < 0 {
-                tile.scroll = 0;
-            }
-        }
 
         if self.selected == (i, j) {
             buffer.push(format!("{}", color::Green.fg_str()));
@@ -484,15 +414,114 @@ impl<W: Write> Multiview<W> {
         buffer.join("")
     }
 
+    /// Renders the (x, y) tile.
+    pub fn render_tile(&mut self, (i, j): (u16, u16), term_size: (u16, u16)) -> String {
+        let w = term_size.0 / self.tiles[0].len() as u16;
+        let h = term_size.1 / self.tiles.len() as u16;
+
+        let x1 = j * w + 1;
+        let y1 = i * h + 1;
+
+        let tile = &self.tile((i, j));
+
+        let mut buffer = vec![];
+
+        let mut counting = true;
+        let mut line_index = 0;
+        let mut current_char_index = 0;
+        let scroll = tile.scroll as u16;
+
+        buffer.push(format!("{}", cursor::Goto(x1 + 2, y1 + 3)));
+
+        for c in tile.stdout.chars() {
+            if c == '\x1b' {
+                counting = false;
+            }
+
+            match c {
+                '\n' => {
+                    line_index += 1;
+                    let old_current_char_index = current_char_index;
+                    current_char_index = 0;
+
+                    if line_index >= scroll && line_index < h + scroll - 4 {
+                        if old_current_char_index < w {
+                            let mut spaces = String::new();
+                            for _ in old_current_char_index..w - 3 {
+                                spaces.push(' ');
+                            }
+                            buffer.push(spaces);
+                        }
+
+                        buffer.push(format!(
+                            "{}",
+                            cursor::Goto(x1 + 2, y1 + 3 + line_index as u16 - scroll)
+                        ));
+                    }
+                }
+
+                _ => {
+                    if counting {
+                        current_char_index += 1;
+                    }
+
+                    if current_char_index == w - 3 {
+                        line_index += 1;
+                        current_char_index = 1;
+
+                        if line_index >= scroll && line_index < h + scroll - 4 {
+                            buffer.push(format!(
+                                "{}",
+                                cursor::Goto(x1 + 2, y1 + 3 + line_index as u16 - scroll)
+                            ));
+                        }
+                    }
+
+                    if line_index >= scroll && line_index < h + scroll - 4 {
+                        buffer.push(format!("{}", c));
+                    }
+                }
+            }
+
+            if c == 'm' {
+                counting = true;
+            }
+        }
+
+        if current_char_index == 0 {
+            let mut spaces = format!("{}", cursor::Goto(x1 + 2, y1 + h - 2));
+            for _ in 0..w - 3 {
+                spaces.push(' ');
+            }
+            buffer.push(spaces);
+        }
+
+        let tile = self.tile_mut((i, j));
+        if tile.max_scroll != line_index as isize {
+            tile.max_scroll = line_index as isize;
+            tile.scroll = tile.max_scroll - h as isize + 5;
+            if tile.scroll < 0 {
+                tile.scroll = 0;
+            }
+        }
+
+        buffer.push(format!("{}", style::Reset));
+        buffer.join("")
+    }
+
     /// Renders all the tiles of the multiview.
     pub fn render(&mut self, term_size: (u16, u16)) -> io::Result<()> {
         let mut buffer = vec![];
         for i in 0..self.tiles.len() {
             for j in 0..self.tiles[0].len() {
+                if self.refresh_ui {
+                    buffer.push(self.first_render_tile((i as u16, j as u16), term_size));
+                }
                 buffer.push(self.render_tile((i as u16, j as u16), term_size));
             }
         }
 
+        self.refresh_ui = false;
         write!(self.stdout, "{}", buffer.join(""))?;
         self.stdout.flush()?;
 
@@ -510,6 +539,93 @@ impl<W: Write> Multiview<W> {
         if tile.scroll > 0 {
             tile.scroll -= 1;
         }
+    }
+
+    /// Push a string into a tile's stdout.
+    pub fn push_stdout(&mut self, (i, j): (u16, u16), content: String) {
+        let tile = self.tile_mut((i, j));
+
+        let mut clear_line_counter = 0;
+
+        for c in content.chars() {
+            // Check if we're running into \x1b[K
+            clear_line_counter = match (c, clear_line_counter) {
+                ('\x1b', _) => 1,
+                ('[', 1) => 2,
+                ('K', 2) => 3,
+                _ => 0,
+            };
+
+            match (clear_line_counter, tile.cursor) {
+                (3, Some(cursor)) => {
+                    // Find the size of the string until the next '\n' or end
+                    let mut counter = 0;
+                    loop {
+                        counter += 1;
+
+                        // TODO fix utf8
+                        if tile.stdout.len() <= counter + cursor
+                            || &tile.stdout[cursor + counter..cursor + counter + 1] == "\n"
+                        {
+                            break;
+                        }
+                    }
+
+                    tile.stdout
+                        .replace_range((cursor - 2)..(cursor + counter), "");
+                    tile.len -= 2 + counter;
+                    tile.cursor = None;
+                    continue;
+                }
+                _ => (),
+            }
+
+            if c == '\r' {
+                // Set cursor at the right place
+                let mut index = tile.len;
+                let mut reverse = tile.stdout.chars().rev();
+
+                loop {
+                    match reverse.next() {
+                        Some('\n') | None => break,
+                        _ => index -= 1,
+                    }
+                }
+
+                tile.cursor = Some(index);
+            } else {
+                let new_cursor = match tile.cursor {
+                    Some(index) => {
+                        if c == '\n' {
+                            tile.stdout.push(c);
+                            tile.len += 1;
+                            None
+                        } else {
+                            // TODO fix utf8
+                            tile.stdout.replace_range(index..index + 1, &c.to_string());
+                            if index + 1 == tile.len {
+                                None
+                            } else {
+                                Some(index + 1)
+                            }
+                        }
+                    }
+
+                    None => {
+                        tile.stdout.push(c);
+                        tile.len += 1;
+                        None
+                    }
+                };
+
+                tile.cursor = new_cursor;
+            }
+        }
+    }
+
+    /// Push a string into a tile's stderr.
+    pub fn push_stderr(&mut self, (i, j): (u16, u16), content: String) {
+        self.push_stdout((i, j), content);
     }
 }
 
@@ -586,9 +702,10 @@ pub fn main() -> io::Result<()> {
                 Event::Key(Key::Char('q')) => sender.send(Msg::Exit).unwrap(),
                 Event::Key(Key::Down) => sender.send(Msg::ScrollDown).unwrap(),
                 Event::Key(Key::Up) => sender.send(Msg::ScrollUp).unwrap(),
-
-                Event::Mouse(me) => match me {
-                    MouseEvent::Press(_, x, y) => sender.send(Msg::Click(x, y)).unwrap(),
+                Event::Mouse(MouseEvent::Press(p, x, y)) => match p {
+                    MouseButton::WheelUp => sender.send(Msg::ScrollUp).unwrap(),
+                    MouseButton::WheelDown => sender.send(Msg::ScrollDown).unwrap(),
+                    MouseButton::Left => sender.send(Msg::Click(x, y)).unwrap(),
                     _ => (),
                 },
 
@@ -599,8 +716,8 @@ pub fn main() -> io::Result<()> {
 
     loop {
         match receiver.recv() {
-            Ok(Msg::Stdout(i, j, line)) => multiview.tile_mut((i, j)).stdout.push(line),
-            Ok(Msg::Stderr(i, j, line)) => multiview.tile_mut((i, j)).stdout.push(line),
+            Ok(Msg::Stdout(i, j, line)) => multiview.push_stdout((i, j), line),
+            Ok(Msg::Stderr(i, j, line)) => multiview.push_stderr((i, j), line),
             Ok(Msg::Click(x, y)) => multiview.select_tile((x, y), term_size),
             Ok(Msg::ScrollDown) => multiview.scroll_down(),
             Ok(Msg::ScrollUp) => multiview.scroll_up(),
