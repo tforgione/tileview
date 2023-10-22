@@ -10,7 +10,7 @@ use pty_process::blocking::Pty;
 
 use termion::{color, cursor, style};
 
-use crate::{rect, Msg};
+use crate::{utils, Msg};
 
 /// A helper to build tiles.
 pub struct TileBuilder {
@@ -325,7 +325,7 @@ impl Tile {
 
         let mut buffer = vec![];
 
-        let max_title_len = self.inner_size.1 - "Command: ".len() as u16;
+        let max_title_len = self.inner_size.0 - "Command: ".len() as u16;
 
         let command_str = if command_str.len() > max_title_len as usize {
             format!(
@@ -350,14 +350,18 @@ impl Tile {
             buffer.push(format!("{}", color::Green.fg_str()));
         }
 
-        buffer.push(rect((x, y), (x + w - 1, y + h - 1)));
+        buffer.push(utils::rect((x, y), (x + w - 1, y + h - 1)));
         buffer.push(format!("{}├", cursor::Goto(x, y + 2)));
 
         for _ in (x + 1)..(x + w) {
             buffer.push(format!("─"));
         }
 
-        buffer.push(format!("{}┤", cursor::Goto(x + w - 1, y + 2)));
+        buffer.push(format!(
+            "{}┤{}",
+            cursor::Goto(x + w - 1, y + 2),
+            style::Reset,
+        ));
 
         buffer.join("")
     }
@@ -387,7 +391,7 @@ impl Tile {
                     let old_current_char_index = current_char_index;
                     current_char_index = 0;
 
-                    if line_index >= scroll && line_index < h + scroll {
+                    if line_index >= scroll && line_index <= h + scroll {
                         if old_current_char_index < w {
                             let mut spaces = String::new();
                             for _ in old_current_char_index..w {
@@ -408,11 +412,11 @@ impl Tile {
                         current_char_index += 1;
                     }
 
-                    if current_char_index == w {
+                    if current_char_index == w + 1 {
                         line_index += 1;
                         current_char_index = 1;
 
-                        if line_index >= scroll && line_index < h + scroll {
+                        if line_index >= scroll && line_index <= h + scroll {
                             buffer.push(format!(
                                 "{}",
                                 cursor::Goto(x, y + line_index as u16 - scroll)
@@ -420,7 +424,7 @@ impl Tile {
                         }
                     }
 
-                    if line_index >= scroll && line_index < h + scroll {
+                    if line_index >= scroll && line_index <= h + scroll {
                         buffer.push(format!("{}", c));
                     }
                 }
@@ -429,14 +433,6 @@ impl Tile {
             if c == 'm' {
                 counting = true;
             }
-        }
-
-        if current_char_index == 0 {
-            let mut spaces = format!("{}", cursor::Goto(x, y + h));
-            for _ in 0..w {
-                spaces.push(' ');
-            }
-            buffer.push(spaces);
         }
 
         buffer.push(format!("{}", style::Reset));
