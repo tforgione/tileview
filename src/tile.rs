@@ -254,7 +254,7 @@ impl Tile {
             // Check if we're running into \x1b[K
             clear_line_counter = match (c, clear_line_counter) {
                 ('\x1b', _) => {
-                    self.counting = true;
+                    self.counting = false;
                     1
                 }
                 ('[', 1) => 2,
@@ -262,36 +262,34 @@ impl Tile {
                 _ => 0,
             };
 
-            match (clear_line_counter, self.cursor) {
-                (3, Some(cursor)) => {
-                    // Find the size of the string until the next '\n' or end
-                    let mut counter = 0;
-                    loop {
-                        counter += 1;
+            if let (3, Some(cursor)) = (clear_line_counter, self.cursor) {
+                // Find the size of the string until the next '\n' or end
+                let mut counter = 0;
+                loop {
+                    counter += 1;
 
-                        // TODO fix utf8
-                        if self.stdout.len() <= counter + cursor
-                            || &self.stdout[cursor + counter..cursor + counter + 1] == "\n"
-                        {
-                            break;
-                        }
+                    // TODO fix utf8
+                    if self.stdout.len() <= counter + cursor
+                        || &self.stdout[cursor + counter..cursor + counter + 1] == "\n"
+                    {
+                        break;
                     }
-
-                    self.stdout
-                        .replace_range((cursor - 2)..(cursor + counter), "");
-                    self.len -= 2 + counter;
-                    self.cursor = None;
-                    self.column_number = 0;
-                    self.counting = true;
-                    continue;
                 }
-                _ => (),
+
+                self.stdout
+                    .replace_range((cursor - 2)..(cursor + counter), "");
+                self.len -= 2 + counter;
+                self.cursor = None;
+                self.column_number = 0;
+                self.counting = true;
+                continue;
             }
 
             if c == '\r' {
                 // Set cursor at the right place
                 let mut index = self.len;
                 let mut reverse = self.stdout.chars().rev();
+                self.column_number = 0;
 
                 loop {
                     match reverse.next() {
@@ -408,6 +406,8 @@ impl Tile {
 
     /// Renders the content of the tile.
     pub fn render_content(&self) -> String {
+        const DELETE_CHAR: char = '-';
+
         let (x, y) = self.inner_position;
         let (w, h) = self.inner_size;
 
@@ -415,6 +415,7 @@ impl Tile {
 
         let mut counting = true;
         let mut line_index = 0;
+        let mut old_current_char_index = 0;
         let mut current_char_index = 0;
         let scroll = self.scroll as u16;
 
@@ -425,17 +426,17 @@ impl Tile {
                 counting = false;
             }
 
+            old_current_char_index = current_char_index;
             match c {
                 '\n' => {
                     line_index += 1;
-                    let old_current_char_index = current_char_index;
                     current_char_index = 0;
 
                     if line_index >= scroll && line_index <= h + scroll {
                         if old_current_char_index < w {
                             let mut spaces = String::new();
                             for _ in old_current_char_index..w {
-                                spaces.push(' ');
+                                spaces.push(DELETE_CHAR);
                             }
                             buffer.push(spaces);
                         }
@@ -474,6 +475,12 @@ impl Tile {
                 counting = true;
             }
         }
+
+        let mut spaces = String::new();
+        for _ in old_current_char_index..w {
+            spaces.push(DELETE_CHAR);
+        }
+        buffer.push(spaces);
 
         buffer.push(format!("{}", style::Reset));
         buffer.join("")
