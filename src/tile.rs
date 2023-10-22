@@ -94,7 +94,7 @@ impl TileBuilder {
             cursor: None,
             len: 0,
             scroll: 0,
-            number_lines: 0,
+            number_lines: 1,
             counting: true,
             column_number: 0,
         })
