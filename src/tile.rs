@@ -406,7 +406,7 @@ impl Tile {
 
     /// Renders the content of the tile.
     pub fn render_content(&self) -> String {
-        const DELETE_CHAR: char = '-';
+        const DELETE_CHAR: char = ' ';
 
         let (x, y) = self.inner_position;
         let (w, h) = self.inner_size;
@@ -417,16 +417,21 @@ impl Tile {
         let mut line_index = 0;
         let mut old_current_char_index = 0;
         let mut current_char_index = 0;
+        let mut last_char = ' ';
         let scroll = self.scroll as u16;
 
         buffer.push(format!("{}", cursor::Goto(x, y)));
 
         for c in self.stdout.chars() {
+            last_char = c;
             if c == '\x1b' {
                 counting = false;
             }
 
-            old_current_char_index = current_char_index;
+            if line_index >= scroll && line_index <= h + scroll {
+                old_current_char_index = current_char_index;
+            }
+
             match c {
                 '\n' => {
                     line_index += 1;
@@ -449,23 +454,23 @@ impl Tile {
                 }
 
                 _ => {
-                    if counting {
-                        current_char_index += 1;
-                    }
-
-                    if current_char_index == w + 1 {
-                        line_index += 1;
-                        current_char_index = 1;
-
-                        if line_index >= scroll && line_index <= h + scroll {
-                            buffer.push(format!(
-                                "{}",
-                                cursor::Goto(x, y + line_index as u16 - scroll)
-                            ));
-                        }
-                    }
-
                     if line_index >= scroll && line_index <= h + scroll {
+                        if counting {
+                            current_char_index += 1;
+                        }
+
+                        if current_char_index == w + 1 {
+                            line_index += 1;
+                            current_char_index = 1;
+
+                            if line_index >= scroll && line_index <= h + scroll {
+                                buffer.push(format!(
+                                    "{}",
+                                    cursor::Goto(x, y + line_index as u16 - scroll)
+                                ));
+                            }
+                        }
+
                         buffer.push(format!("{}", c));
                     }
                 }
@@ -476,8 +481,14 @@ impl Tile {
             }
         }
 
+        let index = if last_char == '\n' {
+            old_current_char_index
+        } else {
+            current_char_index
+        };
+
         let mut spaces = String::new();
-        for _ in old_current_char_index..w {
+        for _ in index..w {
             spaces.push(DELETE_CHAR);
         }
         buffer.push(spaces);
