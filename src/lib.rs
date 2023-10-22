@@ -104,15 +104,14 @@ impl<W: Write> Multiview<W> {
 
     /// Scrolls down the current selected tile.
     pub fn scroll_down(&mut self) {
-        self.tile_mut(self.selected).scroll += 1;
+        let tile = self.tile_mut(self.selected);
+        tile.scroll_down();
     }
 
     /// Scrolls up the current selected tile.
     pub fn scroll_up(&mut self) {
         let tile = self.tile_mut(self.selected);
-        if tile.scroll > 0 {
-            tile.scroll -= 1;
-        }
+        tile.scroll_up();
     }
 
     /// Push a string into a tile's stdout.

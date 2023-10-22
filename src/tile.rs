@@ -95,6 +95,8 @@ impl TileBuilder {
             len: 0,
             scroll: 0,
             number_lines: 0,
+            counting: true,
+            column_number: 0,
         })
     }
 }
@@ -141,6 +143,14 @@ pub struct Tile {
 
     /// The number of lines that stdout will print.
     pub number_lines: isize,
+
+    /// Whether the characters arriving on stdout will move the cursor or not.
+    ///
+    /// Commands changing the text style won't move the cursor.
+    pub counting: bool,
+
+    /// The number of the current column.
+    pub column_number: u16,
 }
 
 impl Tile {
@@ -243,7 +253,10 @@ impl Tile {
         for c in content.chars() {
             // Check if we're running into \x1b[K
             clear_line_counter = match (c, clear_line_counter) {
-                ('\x1b', _) => 1,
+                ('\x1b', _) => {
+                    self.counting = true;
+                    1
+                }
                 ('[', 1) => 2,
                 ('K', 2) => 3,
                 _ => 0,
@@ -268,6 +281,8 @@ impl Tile {
                         .replace_range((cursor - 2)..(cursor + counter), "");
                     self.len -= 2 + counter;
                     self.cursor = None;
+                    self.column_number = 0;
+                    self.counting = true;
                     continue;
                 }
                 _ => (),
@@ -292,6 +307,8 @@ impl Tile {
                         if c == '\n' {
                             self.stdout.push(c);
                             self.len += 1;
+                            self.column_number = 0;
+                            self.number_lines += 1;
                             None
                         } else {
                             // TODO fix utf8
@@ -306,6 +323,19 @@ impl Tile {
 
                     None => {
                         self.stdout.push(c);
+
+                        if c == '\n' {
+                            self.column_number = 0;
+                            self.number_lines += 1;
+                        } else {
+                            if self.counting {
+                                self.column_number += 1;
+                                if self.column_number == self.inner_size.0 + 1 {
+                                    self.column_number = 0;
+                                    self.number_lines += 1;
+                                }
+                            }
+                        }
                         self.len += 1;
                         None
                     }
@@ -313,6 +343,16 @@ impl Tile {
 
                 self.cursor = new_cursor;
             }
+
+            if c == 'm' {
+                self.counting = true;
+            }
+        }
+
+        // Autoscroll whene content arrives on stdout
+        self.scroll = self.number_lines - 1 - (self.inner_size.1 as isize);
+        if self.scroll < 0 {
+            self.scroll = 0;
         }
     }
 
@@ -437,5 +477,19 @@ impl Tile {
 
         buffer.push(format!("{}", style::Reset));
         buffer.join("")
+    }
+
+    /// Scrolls up one line.
+    pub fn scroll_up(&mut self) {
+        if self.scroll > 0 {
+            self.scroll -= 1;
+        }
+    }
+
+    /// Scrolls down one line.
+    pub fn scroll_down(&mut self) {
+        if self.scroll + (self.inner_size.1 as isize) < self.number_lines - 1 {
+            self.scroll += 1;
+        }
     }
 }
