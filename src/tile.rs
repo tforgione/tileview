@@ -280,7 +280,6 @@ impl Tile {
                     .replace_range((cursor - 2)..(cursor + counter), "");
                 self.len -= 2 + counter;
                 self.cursor = None;
-                self.column_number = 0;
                 self.counting = true;
                 continue;
             }
@@ -310,10 +309,19 @@ impl Tile {
                             None
                         } else {
                             // TODO fix utf8
-                            self.stdout.replace_range(index..index + 1, &c.to_string());
-                            if index + 1 == self.len {
+                            if index >= self.stdout.len() {
+                                self.stdout.push(c);
+                                if self.counting {
+                                    self.column_number += 1;
+                                    if self.column_number == self.inner_size.0 + 1 {
+                                        self.column_number = 0;
+                                        self.number_lines += 1;
+                                    }
+                                }
+                                self.len += 1;
                                 None
                             } else {
+                                self.stdout.replace_range(index..index + 1, &c.to_string());
                                 Some(index + 1)
                             }
                         }
