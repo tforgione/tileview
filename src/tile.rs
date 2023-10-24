@@ -91,7 +91,6 @@ impl TileBuilder {
             inner_size: (w - 4, h - 5),
             sender: self.sender?,
             stdout: String::new(),
-            cursor: None,
             len: 0,
             scroll: 0,
             number_lines: 1,
@@ -111,11 +110,6 @@ pub struct Tile {
     ///
     /// We put both stdout and stderr here to avoid dealing with order between stdout and stderr.
     pub stdout: String,
-
-    /// The cursor where stdout should write.
-    ///
-    /// If None, stdout should push at the end of the string.
-    pub cursor: Option<usize>,
 
     /// The number of chars in stdout.
     pub len: usize,
@@ -248,106 +242,27 @@ impl Tile {
 
     /// Push content into the stdout of the tile.
     pub fn push_stdout(&mut self, content: String) {
-        let mut clear_line_counter = 0;
-
         for c in content.chars() {
-            // Check if we're running into \x1b[K
-            clear_line_counter = match (c, clear_line_counter) {
-                ('\x1b', _) => {
-                    self.counting = false;
-                    1
-                }
-                ('[', 1) => 2,
-                ('K', 2) => 3,
-                _ => 0,
-            };
-
-            if let (3, Some(cursor)) = (clear_line_counter, self.cursor) {
-                // Find the size of the string until the next '\n' or end
-                let mut counter = 0;
-                loop {
-                    counter += 1;
-
-                    // TODO fix utf8
-                    if self.stdout.len() <= counter + cursor
-                        || &self.stdout[cursor + counter..cursor + counter + 1] == "\n"
-                    {
-                        break;
-                    }
-                }
-
-                self.stdout
-                    .replace_range((cursor - 2)..(cursor + counter), "");
-                self.len -= 2 + counter;
-                self.cursor = None;
-                self.counting = true;
-                continue;
+            if c == '\x1b' {
+                self.counting = false;
             }
 
-            if c == '\r' {
-                // Set cursor at the right place
-                let mut index = self.len;
-                let mut reverse = self.stdout.chars().rev();
+            if c == '\n' {
+                self.stdout.push(c);
+                self.len += 1;
                 self.column_number = 0;
-
-                loop {
-                    match reverse.next() {
-                        Some('\n') | None => break,
-                        _ => index -= 1,
+                self.number_lines += 1;
+            } else {
+                // TODO fix utf8
+                self.stdout.push(c);
+                if self.counting {
+                    self.column_number += 1;
+                    if self.column_number == self.inner_size.0 + 1 {
+                        self.column_number = 0;
+                        self.number_lines += 1;
                     }
                 }
-
-                self.cursor = Some(index);
-            } else {
-                let new_cursor = match self.cursor {
-                    Some(index) => {
-                        if c == '\n' {
-                            self.stdout.push(c);
-                            self.len += 1;
-                            self.column_number = 0;
-                            self.number_lines += 1;
-                            None
-                        } else {
-                            // TODO fix utf8
-                            if index >= self.stdout.len() {
-                                self.stdout.push(c);
-                                if self.counting {
-                                    self.column_number += 1;
-                                    if self.column_number == self.inner_size.0 + 1 {
-                                        self.column_number = 0;
-                                        self.number_lines += 1;
-                                    }
-                                }
-                                self.len += 1;
-                                None
-                            } else {
-                                self.stdout.replace_range(index..index + 1, &c.to_string());
-                                Some(index + 1)
-                            }
-                        }
-                    }
-
-                    None => {
-                        self.stdout.push(c);
-
-                        if c == '\n' {
-                            self.column_number = 0;
-                            self.number_lines += 1;
-                        } else {
-                            if self.counting {
-                                self.column_number += 1;
-                                if self.column_number == self.inner_size.0 + 1 {
-                                    self.column_number = 0;
-                                    self.number_lines += 1;
-                                }
-                            }
-                        }
-                        self.len += 1;
-                        None
-                    }
-                };
-
-                self.cursor = new_cursor;
+                self.len += 1;
             }
 
             if c == 'm' {
@@ -461,6 +376,16 @@ impl Tile {
                     }
                 }
 
+                '\r' => {
+                    current_char_index = 0;
+                    if line_index >= scroll && line_index <= h + scroll {
+                        buffer.push(format!(
+                            "{}",
+                            cursor::Goto(x, y + line_index as u16 - scroll)
+                        ));
+                    }
+                }
+
                 _ => {
                     if line_index >= scroll && line_index <= h + scroll {
                         if counting {
@@ -516,6 +441,19 @@ impl Tile {
     pub fn scroll_down(&mut self) {
         if self.scroll + (self.inner_size.1 as isize) < self.number_lines - 1 {
             self.scroll += 1;
+        }
+    }
+
+    /// Scrolls up one line.
+    pub fn scroll_full_up(&mut self) {
+        self.scroll = 0;
+    }
+
+    /// Scrolls down one line.
+    pub fn scroll_full_down(&mut self) {
+        self.scroll = self.number_lines - self.inner_size.1 as isize - 1;
+        if self.scroll < 0 {
+            self.scroll = 0;
         }
     }
 }

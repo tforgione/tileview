@@ -114,6 +114,18 @@ impl<W: Write> Multiview<W> {
         tile.scroll_up();
     }
 
+    /// Scrolls down to the bottom of the current selected tile.
+    pub fn scroll_full_down(&mut self) {
+        let tile = self.tile_mut(self.selected);
+        tile.scroll_full_down();
+    }
+
+    /// Scrolls up to the top the current selected tile.
+    pub fn scroll_full_up(&mut self) {
+        let tile = self.tile_mut(self.selected);
+        tile.scroll_full_up();
+    }
+
     /// Push a string into a tile's stdout.
     pub fn push_stdout(&mut self, (i, j): (u16, u16), content: String) {
         let tile = self.tile_mut((i, j));
@@ -148,6 +160,12 @@ pub enum Msg {
 
     /// Scroll down one line.
     ScrollDown,
+
+    /// Scroll to the top of the log.
+    ScrollFullUp,
+
+    /// Scroll to the bottom of the log.
+    ScrollFullDown,
 
     /// The program was asked to exit.
     Exit,
@@ -217,6 +235,8 @@ pub fn main() -> io::Result<()> {
                 Event::Key(Key::Char('q')) => sender.send(Msg::Exit).unwrap(),
                 Event::Key(Key::Down) => sender.send(Msg::ScrollDown).unwrap(),
                 Event::Key(Key::Up) => sender.send(Msg::ScrollUp).unwrap(),
+                Event::Key(Key::End) => sender.send(Msg::ScrollFullDown).unwrap(),
+                Event::Key(Key::Home) => sender.send(Msg::ScrollFullUp).unwrap(),
                 Event::Mouse(MouseEvent::Press(p, x, y)) => match p {
                     MouseButton::WheelUp => sender.send(Msg::ScrollUp).unwrap(),
                     MouseButton::WheelDown => sender.send(Msg::ScrollDown).unwrap(),
@@ -236,6 +256,8 @@ pub fn main() -> io::Result<()> {
             Ok(Msg::Click(x, y)) => multiview.select_tile((x, y), term_size),
             Ok(Msg::ScrollDown) => multiview.scroll_down(),
             Ok(Msg::ScrollUp) => multiview.scroll_up(),
+            Ok(Msg::ScrollFullDown) => multiview.scroll_full_down(),
+            Ok(Msg::ScrollFullUp) => multiview.scroll_full_up(),
             Ok(Msg::Exit) => break,
             Err(_) => (),
         }
