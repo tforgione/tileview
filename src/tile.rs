@@ -265,7 +265,6 @@ impl Tile {
                 }
 
                 _ => {
-                    // TODO fix utf8
                     self.stdout.last_mut().unwrap().push(c);
 
                     if self.counting {
@@ -407,25 +406,23 @@ impl Tile {
 
                 match &subbuffer[0..3] {
                     "\x1b[K" => {
-                        if line_index >= scroll && line_index <= h + scroll {
-                            if current_char_index < w {
-                                let mut spaces = String::new();
-                                for _ in current_char_index..w {
-                                    spaces.push(DELETE_CHAR);
-                                }
-                                buffer.push(format!(
-                                    "{}{}{}",
-                                    cursor::Goto(
-                                        x + current_char_index,
-                                        y + line_index as u16 - scroll
-                                    ),
-                                    spaces,
-                                    cursor::Goto(
-                                        x + current_char_index,
-                                        y + line_index as u16 - scroll
-                                    ),
-                                ));
+                        if current_char_index < w {
+                            let mut spaces = String::new();
+                            for _ in current_char_index..w {
+                                spaces.push(DELETE_CHAR);
                             }
+                            buffer.push(format!(
+                                "{}{}{}",
+                                cursor::Goto(
+                                    x + current_char_index,
+                                    y + line_index as u16 - scroll
+                                ),
+                                spaces,
+                                cursor::Goto(
+                                    x + current_char_index,
+                                    y + line_index as u16 - scroll
+                                ),
+                            ));
                         }
                     }
                     _ => buffer.push(subbuffer),
@@ -439,32 +436,44 @@ impl Tile {
                     line_index += 1;
                     current_char_index = 0;
 
-                    if line_index >= scroll && line_index <= h + scroll {
-                        if max_char_index < w {
-                            let mut spaces = format!(
-                                "{}",
-                                cursor::Goto(x + max_char_index, y + line_index as u16 - scroll)
-                            );
-                            for _ in max_char_index..w {
-                                spaces.push(DELETE_CHAR);
-                            }
-                            buffer.push(spaces);
-                        }
-
-                        max_char_index = 0;
-
-                        buffer.push(format!(
-                            "{}",
-                            cursor::Goto(x, y + line_index as u16 - scroll)
-                        ));
-
-                        last_line_index = line_index;
+                    let mut spaces = format!(
+                        "{}",
+                        cursor::Goto(x + max_char_index, y + line_index as u16 - scroll)
+                    );
+                    for _ in max_char_index..w {
+                        spaces.push(DELETE_CHAR);
                     }
+                    buffer.push(spaces);
+
+                    max_char_index = 0;
+
+                    buffer.push(format!(
+                        "{}",
+                        cursor::Goto(x, y + line_index as u16 - scroll)
+                    ));
+
+                    last_line_index = line_index;
                 }
 
                 '\r' => {
                     current_char_index = 0;
-                    if line_index >= scroll && line_index <= h + scroll {
+                    buffer.push(format!(
+                        "{}",
+                        cursor::Goto(x, y + line_index as u16 - scroll)
+                    ));
+
+                    last_line_index = line_index;
+                }
+
+                _ => {
+                    current_char_index += 1;
+                    max_char_index = std::cmp::max(max_char_index, current_char_index);
+
+                    if current_char_index == w + 1 {
+                        line_index += 1;
+                        current_char_index = 1;
+                        max_char_index = 1;
+
                         buffer.push(format!(
                             "{}",
                             cursor::Goto(x, y + line_index as u16 - scroll)
@@ -472,30 +481,8 @@ impl Tile {
 
                         last_line_index = line_index;
                     }
-                }
 
-                _ => {
-                    if line_index >= scroll && line_index <= h + scroll {
-                        current_char_index += 1;
-                        max_char_index = std::cmp::max(max_char_index, current_char_index);
-
-                        if current_char_index == w + 1 {
-                            line_index += 1;
-                            current_char_index = 1;
-                            max_char_index = 1;
-
-                            if line_index >= scroll && line_index <= h + scroll {
-                                buffer.push(format!(
-                                    "{}",
-                                    cursor::Goto(x, y + line_index as u16 - scroll)
-                                ));
-
-                                last_line_index = line_index;
-                            }
-                        }
-
-                        buffer.push(format!("{}", c));
-                    }
+                    buffer.push(format!("{}", c));
                 }
             }
         }
