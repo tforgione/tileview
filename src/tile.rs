@@ -346,7 +346,6 @@ impl Tile {
 
         let mut line_index = 0;
         let mut last_line_index = 0;
-        let mut old_current_char_index = 0;
         let mut current_char_index = 0;
         let mut max_char_index = 0;
         let scroll = self.scroll as u16;
@@ -378,15 +377,32 @@ impl Tile {
                 }
 
                 match &subbuffer[0..3] {
-                    "\x1b[K" => (),
+                    "\x1b[K" => {
+                        if line_index >= scroll && line_index <= h + scroll {
+                            if current_char_index < w {
+                                let mut spaces = String::new();
+                                for _ in current_char_index..w {
+                                    spaces.push(DELETE_CHAR);
+                                }
+                                buffer.push(format!(
+                                    "{}{}{}",
+                                    cursor::Goto(
+                                        x + current_char_index,
+                                        y + line_index as u16 - scroll
+                                    ),
+                                    spaces,
+                                    cursor::Goto(
+                                        x + current_char_index,
+                                        y + line_index as u16 - scroll
+                                    ),
+                                ));
+                            }
+                        }
+                    }
                     _ => buffer.push(subbuffer),
                 }
 
                 continue;
-            }
-
-            if line_index >= scroll && line_index <= h + scroll {
-                old_current_char_index = current_char_index;
             }
 
             match c {
@@ -395,15 +411,18 @@ impl Tile {
                     current_char_index = 0;
 
                     if line_index >= scroll && line_index <= h + scroll {
-                        max_char_index = 0;
-
-                        if old_current_char_index < w {
-                            let mut spaces = String::new();
-                            for _ in old_current_char_index..w {
+                        if max_char_index < w {
+                            let mut spaces = format!(
+                                "{}",
+                                cursor::Goto(x + max_char_index, y + line_index as u16 - scroll)
+                            );
+                            for _ in max_char_index..w {
                                 spaces.push(DELETE_CHAR);
                             }
                             buffer.push(spaces);
                         }
+
+                        max_char_index = 0;
 
                         buffer.push(format!(
                             "{}",
@@ -451,13 +470,6 @@ impl Tile {
                 }
             }
         }
-
-        // I don't know how to clear this correctly :'(
-        // let index = if last_char == '\n' {
-        //     old_current_char_index
-        // } else {
-        //     max_char_index;
-        // };
 
         let mut spaces = format!(
             "{}",
