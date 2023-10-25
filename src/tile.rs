@@ -340,15 +340,21 @@ impl Tile {
 
         let mut buffer = vec![];
 
-        let mut line_index = 0;
-        let mut last_line_index = 0;
         let mut current_char_index = 0;
         let mut max_char_index = 0;
+
         let scroll = self.scroll as u16;
+        let mut line_index = scroll;
+        let mut last_line_index = line_index;
 
         buffer.push(format!("{}", cursor::Goto(x, y)));
 
-        let mut iter = self.stdout.iter();
+        let mut iter = self
+            .stdout
+            .iter()
+            .skip(scroll as usize)
+            .take((h + scroll) as usize);
+
         let mut line = iter.next().unwrap();
         let mut char_iter = line.chars();
 
