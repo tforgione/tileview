@@ -91,7 +91,6 @@ impl TileBuilder {
             inner_size: (w - 4, h - 5),
             sender: self.sender?,
             stdout: String::new(),
-            len: 0,
             scroll: 0,
             number_lines: 1,
             counting: true,
@@ -110,9 +109,6 @@ pub struct Tile {
     ///
     /// We put both stdout and stderr here to avoid dealing with order between stdout and stderr.
     pub stdout: String,
-
-    /// The number of chars in stdout.
-    pub len: usize,
 
     /// The sender for the communication with the multiview.
     pub sender: Sender<Msg>,
@@ -180,24 +176,46 @@ impl Tile {
 
         let coords = coords;
 
-        thread::spawn(move || loop {
-            let mut buffer = [0; 4096];
-            let result = stdout.read(&mut buffer);
+        thread::spawn(move || {
+            loop {
+                let mut buffer = [0; 4096];
+                let result = stdout.read(&mut buffer);
 
-            match result {
-                Ok(0) => break,
+                match result {
+                    Ok(0) => break,
 
-                Ok(n) => {
-                    sender
-                        .send(Msg::Stderr(
-                            coords,
-                            String::from_utf8_lossy(&buffer[0..n]).to_string(),
-                        ))
-                        .unwrap();
+                    Ok(n) => {
+                        sender
+                            .send(Msg::Stderr(
+                                coords,
+                                String::from_utf8_lossy(&buffer[0..n]).to_string(),
+                            ))
+                            .unwrap();
+                    }
+
+                    Err(_) => break,
                 }
-
-                Err(_) => break,
             }
+
+            sender
+                .send(Msg::Stdout(coords, String::from("\n")))
+                .unwrap();
+
+            let code = 0;
+
+            let exit_string = format!(
+                "{}{}Command exited with return code {}\r{}",
+                style::Bold,
+                if code == 0 {
+                    color::Green.fg_str()
+                } else {
+                    color::Red.fg_str()
+                },
+                code,
+                style::Reset,
+            );
+
+            sender.send(Msg::Stdout(coords, exit_string)).unwrap();
         });
 
         thread::spawn(move || loop {
@@ -229,26 +247,33 @@ impl Tile {
             if c == '\x1b' {
                 self.counting = false;
             }
+            match c {
+                '\n' => {
+                    self.stdout.push(c);
+                    self.column_number = 0;
+                    self.number_lines += 1;
+                }
 
-            if c == '\n' {
-                self.stdout.push(c);
-                self.len += 1;
-                self.column_number = 0;
-                self.number_lines += 1;
-            } else {
-                // TODO fix utf8
-                self.stdout.push(c);
-                if self.counting {
-                    self.column_number += 1;
-                    if self.column_number == self.inner_size.0 + 1 {
-                        self.column_number = 0;
-                        self.number_lines += 1;
+                '\r' => {
+                    self.stdout.push(c);
+                    self.column_number = 0;
+                }
+
+                _ => {
+                    // TODO fix utf8
+                    self.stdout.push(c);
+
+                    if self.counting {
+                        self.column_number += 1;
+                        if self.column_number == self.inner_size.0 + 1 {
+                            self.column_number = 0;
+                            self.number_lines += 1;
+                        }
                     }
                 }
-                self.len += 1;
             }
 
-            if c == 'm' {
+            if c == 'm' || c == 'K' {
                 self.counting = true;
             }
         }
@@ -319,19 +344,45 @@ impl Tile {
 
         let mut buffer = vec![];
 
-        let mut counting = true;
         let mut line_index = 0;
+        let mut last_line_index = 0;
         let mut old_current_char_index = 0;
         let mut current_char_index = 0;
-        let mut last_char = ' ';
+        let mut max_char_index = 0;
         let scroll = self.scroll as u16;
 
         buffer.push(format!("{}", cursor::Goto(x, y)));
 
-        for c in self.stdout.chars() {
-            last_char = c;
+        let mut iter = self.stdout.chars();
+
+        loop {
+            let c = match iter.next() {
+                Some(c) => c,
+                None => break,
+            };
+
             if c == '\x1b' {
-                counting = false;
+                let mut subbuffer = String::from(c);
+
+                loop {
+                    let next = match iter.next() {
+                        Some(c) => c,
+                        None => break,
+                    };
+
+                    subbuffer.push(next);
+
+                    if next == 'm' || next == 'K' {
+                        break;
+                    }
+                }
+
+                match &subbuffer[0..3] {
+                    "\x1b[K" => (),
+                    _ => buffer.push(subbuffer),
+                }
+
+                continue;
             }
 
             if line_index >= scroll && line_index <= h + scroll {
@@ -344,6 +395,8 @@ impl Tile {
                     current_char_index = 0;
 
                     if line_index >= scroll && line_index <= h + scroll {
+                        max_char_index = 0;
+
                         if old_current_char_index < w {
                             let mut spaces = String::new();
                             for _ in old_current_char_index..w {
@@ -356,6 +409,8 @@ impl Tile {
                             "{}",
                             cursor::Goto(x, y + line_index as u16 - scroll)
                         ));
+
+                        last_line_index = line_index;
                     }
                 }
 
@@ -366,24 +421,28 @@ impl Tile {
                             "{}",
                             cursor::Goto(x, y + line_index as u16 - scroll)
                         ));
+
+                        last_line_index = line_index;
                     }
                 }
 
                 _ => {
                     if line_index >= scroll && line_index <= h + scroll {
-                        if counting {
-                            current_char_index += 1;
-                        }
+                        current_char_index += 1;
+                        max_char_index = std::cmp::max(max_char_index, current_char_index);
 
                         if current_char_index == w + 1 {
                             line_index += 1;
                             current_char_index = 1;
+                            max_char_index = 1;
 
                             if line_index >= scroll && line_index <= h + scroll {
                                 buffer.push(format!(
                                     "{}",
                                     cursor::Goto(x, y + line_index as u16 - scroll)
                                 ));
+
+                                last_line_index = line_index;
                             }
                         }
 
@@ -391,20 +450,21 @@ impl Tile {
                     }
                 }
             }
-
-            if c == 'm' {
-                counting = true;
-            }
         }
 
-        let index = if last_char == '\n' {
-            old_current_char_index
-        } else {
-            current_char_index
-        };
+        // I don't know how to clear this correctly :'(
+        // let index = if last_char == '\n' {
+        //     old_current_char_index
+        // } else {
+        //     max_char_index;
+        // };
 
-        let mut spaces = String::new();
-        for _ in index..w {
+        let mut spaces = format!(
+            "{}",
+            cursor::Goto(x + max_char_index, y + last_line_index as u16 - scroll)
+        );
+
+        for _ in max_char_index..w {
             spaces.push(DELETE_CHAR);
         }
         buffer.push(spaces);

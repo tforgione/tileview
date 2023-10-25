@@ -153,17 +153,22 @@ impl<W: Write> Multiview<W> {
 
         Ok(())
     }
-}
 
-impl<W: Write> Drop for Multiview<W> {
-    fn drop(&mut self) {
-        write!(self.stdout, "{}", cursor::Show).unwrap();
+    /// Exits.
+    pub fn exit(&mut self) {
+        write!(self.stdout, "{}", cursor::Show).ok();
 
         for row in &mut self.tiles {
             for tile in row {
                 tile.kill().ok();
             }
         }
+    }
+}
+
+impl<W: Write> Drop for Multiview<W> {
+    fn drop(&mut self) {
+        self.exit();
     }
 }
 
@@ -291,7 +296,10 @@ pub fn main() -> io::Result<()> {
             Ok(Msg::ScrollUp) => multiview.scroll_up(),
             Ok(Msg::ScrollFullDown) => multiview.scroll_full_down(),
             Ok(Msg::ScrollFullUp) => multiview.scroll_full_up(),
-            Ok(Msg::Exit) => break,
+            Ok(Msg::Exit) => {
+                multiview.exit();
+                break;
+            }
             Err(_) => (),
         }
 
