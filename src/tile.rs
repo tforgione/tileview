@@ -90,9 +90,8 @@ impl TileBuilder {
             outer_size: (w, h),
             inner_size: (w - 4, h - 5),
             sender: self.sender?,
-            stdout: String::new(),
+            stdout: vec![String::new()],
             scroll: 0,
-            number_lines: 1,
             counting: true,
             column_number: 0,
             child: None,
@@ -108,7 +107,7 @@ pub struct Tile {
     /// Content of the command's stdout and stderr.
     ///
     /// We put both stdout and stderr here to avoid dealing with order between stdout and stderr.
-    pub stdout: String,
+    pub stdout: Vec<String>,
 
     /// The sender for the communication with the multiview.
     pub sender: Sender<Msg>,
@@ -130,9 +129,6 @@ pub struct Tile {
 
     /// The number of lines that the stdout is scrolled.
     pub scroll: isize,
-
-    /// The number of lines that stdout will print.
-    pub number_lines: isize,
 
     /// Whether the characters arriving on stdout will move the cursor or not.
     ///
@@ -249,25 +245,25 @@ impl Tile {
             }
             match c {
                 '\n' => {
-                    self.stdout.push(c);
+                    self.stdout.last_mut().unwrap().push(c);
+                    self.stdout.push(String::new());
                     self.column_number = 0;
-                    self.number_lines += 1;
                 }
 
                 '\r' => {
-                    self.stdout.push(c);
+                    self.stdout.last_mut().unwrap().push(c);
                     self.column_number = 0;
                 }
 
                 _ => {
                     // TODO fix utf8
-                    self.stdout.push(c);
+                    self.stdout.last_mut().unwrap().push(c);
 
                     if self.counting {
                         self.column_number += 1;
                         if self.column_number == self.inner_size.0 + 1 {
+                            self.stdout.push(String::new());
                             self.column_number = 0;
-                            self.number_lines += 1;
                         }
                     }
                 }
@@ -279,7 +275,7 @@ impl Tile {
         }
 
         // Autoscroll whene content arrives on stdout
-        self.scroll = self.number_lines - 1 - (self.inner_size.1 as isize);
+        self.scroll = self.stdout.len() as isize - 1 - (self.inner_size.1 as isize);
         if self.scroll < 0 {
             self.scroll = 0;
         }
@@ -352,21 +348,39 @@ impl Tile {
 
         buffer.push(format!("{}", cursor::Goto(x, y)));
 
-        let mut iter = self.stdout.chars();
+        let mut iter = self.stdout.iter();
+        let mut line = iter.next().unwrap();
+        let mut char_iter = line.chars();
 
         loop {
-            let c = match iter.next() {
+            let c = match char_iter.next() {
                 Some(c) => c,
-                None => break,
+                None => match iter.next() {
+                    Some(l) => {
+                        line = l;
+                        char_iter = line.chars();
+                        continue;
+                    }
+                    None => break,
+                },
             };
 
             if c == '\x1b' {
                 let mut subbuffer = String::from(c);
 
                 loop {
-                    let next = match iter.next() {
+                    let next = match char_iter.next() {
                         Some(c) => c,
-                        None => break,
+                        None => {
+                            match iter.next() {
+                                Some(l) => {
+                                    line = l;
+                                    char_iter = line.chars();
+                                    continue;
+                                }
+                                None => break,
+                            };
+                        }
                     };
 
                     subbuffer.push(next);
@@ -494,7 +508,7 @@ impl Tile {
 
     /// Scrolls down one line.
     pub fn scroll_down(&mut self) {
-        if self.scroll + (self.inner_size.1 as isize) < self.number_lines - 1 {
+        if self.scroll + (self.inner_size.1 as isize) < self.stdout.len() as isize - 1 {
             self.scroll += 1;
         }
     }
@@ -506,7 +520,7 @@ impl Tile {
 
     /// Scrolls down one line.
     pub fn scroll_full_down(&mut self) {
-        self.scroll = self.number_lines - self.inner_size.1 as isize - 1;
+        self.scroll = self.stdout.len() as isize - self.inner_size.1 as isize - 1;
         if self.scroll < 0 {
             self.scroll = 0;
         }
