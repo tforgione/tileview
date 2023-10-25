@@ -154,6 +154,23 @@ impl<W: Write> Multiview<W> {
         Ok(())
     }
 
+    /// Kills the selected tile.
+    pub fn kill(&mut self) -> io::Result<()> {
+        let tile = self.tile_mut(self.selected);
+        tile.kill()
+    }
+
+    /// Kills all tiles.
+    pub fn kill_all(&mut self) -> io::Result<()> {
+        for row in &mut self.tiles {
+            for tile in row {
+                tile.kill()?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Exits.
     pub fn exit(&mut self) {
         write!(self.stdout, "{}", cursor::Show).ok();
@@ -188,6 +205,12 @@ pub enum Msg {
 
     /// Restarts all tiles.
     RestartAll,
+
+    /// Kills the selected tile.
+    Kill,
+
+    /// Kills all tiles.
+    KillAll,
 
     /// Scroll up one line.
     ScrollUp,
@@ -269,6 +292,8 @@ pub fn main() -> io::Result<()> {
                 Event::Key(Key::Char('q')) => sender.send(Msg::Exit).unwrap(),
                 Event::Key(Key::Char('r')) => sender.send(Msg::Restart).unwrap(),
                 Event::Key(Key::Char('R')) => sender.send(Msg::RestartAll).unwrap(),
+                Event::Key(Key::Char('k')) => sender.send(Msg::Kill).unwrap(),
+                Event::Key(Key::Char('K')) => sender.send(Msg::KillAll).unwrap(),
                 Event::Key(Key::Down) => sender.send(Msg::ScrollDown).unwrap(),
                 Event::Key(Key::Up) => sender.send(Msg::ScrollUp).unwrap(),
                 Event::Key(Key::End) => sender.send(Msg::ScrollFullDown).unwrap(),
@@ -293,6 +318,8 @@ pub fn main() -> io::Result<()> {
             Ok(Msg::ScrollDown) => multiview.scroll_down(),
             Ok(Msg::Restart) => multiview.restart()?,
             Ok(Msg::RestartAll) => multiview.restart_all()?,
+            Ok(Msg::Kill) => multiview.kill()?,
+            Ok(Msg::KillAll) => multiview.kill_all()?,
             Ok(Msg::ScrollUp) => multiview.scroll_up(),
             Ok(Msg::ScrollFullDown) => multiview.scroll_full_down(),
             Ok(Msg::ScrollFullUp) => multiview.scroll_full_up(),

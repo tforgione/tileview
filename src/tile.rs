@@ -212,6 +212,15 @@ impl Tile {
             );
 
             sender.send(Msg::Stdout(coords, exit_string)).unwrap();
+
+            let mut line = String::new();
+            for _ in 0..size.0 - 1 {
+                line.push('─');
+            }
+
+            sender
+                .send(Msg::Stdout(coords, format!("\n{}\n", line)))
+                .unwrap();
         });
 
         thread::spawn(move || loop {
