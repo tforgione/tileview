@@ -248,7 +248,6 @@ impl Tile {
 
     /// Push content into the stdout of the tile.
     pub fn push_stdout(&mut self, content: String) {
-        eprintln!("{:?}", content);
         for c in content.chars() {
             if c == '\x1b' {
                 self.counting = false;
