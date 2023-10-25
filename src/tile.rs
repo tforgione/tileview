@@ -249,7 +249,6 @@ impl Tile {
     /// Push content into the stdout of the tile.
     pub fn push_stdout(&mut self, content: String) {
         eprintln!("{:?}", content);
-
         for c in content.chars() {
             if c == '\x1b' {
                 self.counting = false;
@@ -363,7 +362,7 @@ impl Tile {
             .stdout
             .iter()
             .skip(scroll as usize)
-            .take((h + scroll) as usize);
+            .take(h as usize + 1);
 
         let mut line = iter.next().unwrap();
         let mut char_iter = line.chars();

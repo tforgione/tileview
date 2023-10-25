@@ -1,5 +1,6 @@
 use std::io::{self, stdin, stdout, Write};
 use std::sync::mpsc::channel;
+use std::time::{Duration, Instant};
 use std::{env, thread};
 
 use termion::event::{Event, Key, MouseButton, MouseEvent};
@@ -27,6 +28,9 @@ struct Multiview<W: Write> {
 
     /// Whether we need to refresh the UI.
     pub refresh_ui: bool,
+
+    /// Last time when the rendering was performed.
+    pub last_render: Instant,
 }
 
 impl<W: Write> Multiview<W> {
@@ -37,6 +41,7 @@ impl<W: Write> Multiview<W> {
             tiles,
             selected: (0, 0),
             refresh_ui: true,
+            last_render: Instant::now(),
         };
 
         write!(
@@ -85,6 +90,13 @@ impl<W: Write> Multiview<W> {
 
     /// Renders all the tiles of the multiview.
     pub fn render(&mut self) -> io::Result<()> {
+        let now = Instant::now();
+
+        if now.duration_since(self.last_render) < Duration::from_millis(20) {
+            return Ok(());
+        }
+
+        self.last_render = now;
         let mut buffer = vec![];
         for i in 0..self.tiles.len() {
             for j in 0..self.tiles[0].len() {
