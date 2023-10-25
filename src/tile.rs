@@ -1,7 +1,7 @@
 //! This module contains everything related to tiles.
 
-use std::io::Read;
-use std::process::Stdio;
+use std::io::{self, Read};
+use std::process::{Child, Stdio};
 use std::sync::mpsc::Sender;
 use std::thread;
 
@@ -96,12 +96,12 @@ impl TileBuilder {
             number_lines: 1,
             counting: true,
             column_number: 0,
+            child: None,
         })
     }
 }
 
 /// A tile with a command running inside it.
-#[derive(Debug)]
 pub struct Tile {
     /// The command that should be executed in the tile.
     pub command: Vec<String>,
@@ -145,6 +145,9 @@ pub struct Tile {
 
     /// The number of the current column.
     pub column_number: u16,
+
+    /// The PTY and the child process of the command running in the tile.
+    pub child: Option<(Pty, Child)>,
 }
 
 impl Tile {
@@ -161,83 +164,63 @@ impl Tile {
         let size = self.inner_size;
         let sender = self.sender.clone();
 
-        thread::spawn(move || {
-            let pty = Pty::new().unwrap();
-            pty.resize(pty_process::Size::new(size.1, size.0)).unwrap();
+        let pty = Pty::new().unwrap();
+        pty.resize(pty_process::Size::new(size.1, size.0)).unwrap();
 
-            let mut child = Command::new(&clone[0])
-                .args(&clone[1..])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn(&pty.pts().unwrap())
-                .unwrap();
+        let mut child = Command::new(&clone[0])
+            .args(&clone[1..])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn(&pty.pts().unwrap())
+            .unwrap();
 
-            let mut stdout = child.stdout.take().unwrap();
-            let mut stderr = child.stderr.take().unwrap();
-            let stderr_sender = sender.clone();
+        let mut stdout = child.stdout.take().unwrap();
+        let mut stderr = child.stderr.take().unwrap();
+        let stderr_sender = sender.clone();
 
-            let coords = coords;
+        let coords = coords;
 
-            thread::spawn(move || loop {
-                let mut buffer = [0; 4096];
-                let result = stderr.read(&mut buffer);
+        thread::spawn(move || loop {
+            let mut buffer = [0; 4096];
+            let result = stdout.read(&mut buffer);
 
-                match result {
-                    Ok(0) => break,
+            match result {
+                Ok(0) => break,
 
-                    Ok(n) => {
-                        stderr_sender
-                            .send(Msg::Stderr(
-                                coords,
-                                String::from_utf8_lossy(&buffer[0..n]).to_string(),
-                            ))
-                            .unwrap();
-                    }
-
-                    Err(_) => break,
+                Ok(n) => {
+                    sender
+                        .send(Msg::Stderr(
+                            coords,
+                            String::from_utf8_lossy(&buffer[0..n]).to_string(),
+                        ))
+                        .unwrap();
                 }
-            });
 
-            loop {
-                let mut buffer = [0; 4096];
-                let result = stdout.read(&mut buffer);
-
-                match result {
-                    Ok(0) => break,
-
-                    Ok(n) => {
-                        sender
-                            .send(Msg::Stderr(
-                                coords,
-                                String::from_utf8_lossy(&buffer[0..n]).to_string(),
-                            ))
-                            .unwrap();
-                    }
-
-                    Err(_) => break,
-                }
+                Err(_) => break,
             }
-
-            sender
-                .send(Msg::Stdout(coords, String::from("\n")))
-                .unwrap();
-
-            let code = child.wait().unwrap().code().unwrap();
-
-            let exit_string = format!(
-                "{}{}Command exited with return code {}{}\n",
-                style::Bold,
-                if code == 0 {
-                    color::Green.fg_str()
-                } else {
-                    color::Red.fg_str()
-                },
-                code,
-                style::Reset,
-            );
-
-            sender.send(Msg::Stdout(coords, exit_string)).unwrap();
         });
+
+        thread::spawn(move || loop {
+            let mut buffer = [0; 4096];
+            let result = stderr.read(&mut buffer);
+
+            match result {
+                Ok(0) => break,
+
+                Ok(n) => {
+                    stderr_sender
+                        .send(Msg::Stderr(
+                            coords,
+                            String::from_utf8_lossy(&buffer[0..n]).to_string(),
+                        ))
+                        .unwrap();
+                }
+
+                Err(_) => break,
+            }
+        });
+
+        self.child = Some((pty, child));
     }
 
     /// Push content into the stdout of the tile.
@@ -455,5 +438,21 @@ impl Tile {
         if self.scroll < 0 {
             self.scroll = 0;
         }
+    }
+
+    /// Kill the child command.
+    pub fn kill(&mut self) -> io::Result<()> {
+        if let Some((_, child)) = self.child.as_mut() {
+            child.kill()?;
+        }
+
+        Ok(())
+    }
+
+    /// Restarts the child command.
+    pub fn restart(&mut self) -> io::Result<()> {
+        self.kill()?;
+        self.start();
+        Ok(())
     }
 }

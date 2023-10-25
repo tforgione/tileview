@@ -136,11 +136,34 @@ impl<W: Write> Multiview<W> {
     pub fn push_stderr(&mut self, (i, j): (u16, u16), content: String) {
         self.push_stdout((i, j), content);
     }
+
+    /// Restarts the selected tile.
+    pub fn restart(&mut self) -> io::Result<()> {
+        let tile = self.tile_mut(self.selected);
+        tile.restart()
+    }
+
+    /// Restarts all tiles.
+    pub fn restart_all(&mut self) -> io::Result<()> {
+        for row in &mut self.tiles {
+            for tile in row {
+                tile.restart()?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl<W: Write> Drop for Multiview<W> {
     fn drop(&mut self) {
         write!(self.stdout, "{}", cursor::Show).unwrap();
+
+        for row in &mut self.tiles {
+            for tile in row {
+                tile.kill().ok();
+            }
+        }
     }
 }
 
@@ -154,6 +177,12 @@ pub enum Msg {
 
     /// A click occured.
     Click(u16, u16),
+
+    /// Restarts the selected tile.
+    Restart,
+
+    /// Restarts all tiles.
+    RestartAll,
 
     /// Scroll up one line.
     ScrollUp,
@@ -233,6 +262,8 @@ pub fn main() -> io::Result<()> {
             let evt = c.unwrap();
             match evt {
                 Event::Key(Key::Char('q')) => sender.send(Msg::Exit).unwrap(),
+                Event::Key(Key::Char('r')) => sender.send(Msg::Restart).unwrap(),
+                Event::Key(Key::Char('R')) => sender.send(Msg::RestartAll).unwrap(),
                 Event::Key(Key::Down) => sender.send(Msg::ScrollDown).unwrap(),
                 Event::Key(Key::Up) => sender.send(Msg::ScrollUp).unwrap(),
                 Event::Key(Key::End) => sender.send(Msg::ScrollFullDown).unwrap(),
@@ -255,6 +286,8 @@ pub fn main() -> io::Result<()> {
             Ok(Msg::Stderr(coords, line)) => multiview.push_stderr(coords, line),
             Ok(Msg::Click(x, y)) => multiview.select_tile((x, y), term_size),
             Ok(Msg::ScrollDown) => multiview.scroll_down(),
+            Ok(Msg::Restart) => multiview.restart()?,
+            Ok(Msg::RestartAll) => multiview.restart_all()?,
             Ok(Msg::ScrollUp) => multiview.scroll_up(),
             Ok(Msg::ScrollFullDown) => multiview.scroll_full_down(),
             Ok(Msg::ScrollFullUp) => multiview.scroll_full_up(),
