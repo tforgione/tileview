@@ -248,6 +248,8 @@ impl Tile {
 
     /// Push content into the stdout of the tile.
     pub fn push_stdout(&mut self, content: String) {
+        eprintln!("{:?}", content);
+
         for c in content.chars() {
             if c == '\x1b' {
                 self.counting = false;
@@ -433,9 +435,6 @@ impl Tile {
 
             match c {
                 '\n' => {
-                    line_index += 1;
-                    current_char_index = 0;
-
                     let mut spaces = format!(
                         "{}",
                         cursor::Goto(x + max_char_index, y + line_index as u16 - scroll)
@@ -445,6 +444,8 @@ impl Tile {
                     }
                     buffer.push(spaces);
 
+                    line_index += 1;
+                    current_char_index = 0;
                     max_char_index = 0;
 
                     buffer.push(format!(
