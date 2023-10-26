@@ -99,7 +99,7 @@ impl<W: Write> Multiview<W> {
     /// Renders the (x, y) tile.
     pub fn render_tile_content(&mut self, (i, j): (u16, u16)) -> String {
         let tile = self.tile((i, j));
-        tile.render_content()
+        tile.render_content(self.selected == (i, j))
     }
 
     /// Renders all the tiles of the multiview.

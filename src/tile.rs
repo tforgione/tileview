@@ -346,7 +346,7 @@ impl Tile {
     }
 
     /// Renders the content of the tile.
-    pub fn render_content(&self) -> String {
+    pub fn render_content(&self, selected: bool) -> String {
         const DELETE_CHAR: char = ' ';
 
         let (x, y) = self.inner_position;
@@ -507,6 +507,51 @@ impl Tile {
                 spaces.push(DELETE_CHAR);
             }
             buffer.push(spaces);
+        }
+
+        // Render scrollbar,thanks @gdamms
+        // I have no idea what this code does, I copied/pasted it from gdamms, and then modified
+        // some stuff so that it would look right
+        if last_line_index > h {
+            let mut subbuffer = vec![];
+            subbuffer.push(format!(
+                "{}{}{}{}",
+                style::Reset,
+                if selected { color::Green.fg_str() } else { "" },
+                cursor::Goto(x + w + 1, y),
+                "▲"
+            ));
+
+            let bar_portion = h as f32 / self.stdout.len() as f32;
+            let bar_nb = f32::max(1.0, (bar_portion * (h) as f32).round()) as u16;
+            let max_scroll = self.stdout.len() as isize - h as isize - 1;
+
+            let (scroll_nb_bottom, scroll_nb_top) = if self.scroll > max_scroll / 2 {
+                let scroll_nb_bottom = (self.stdout.len() as isize - self.scroll) as u16 - h;
+                let scroll_nb_bottom = scroll_nb_bottom as f32 / self.stdout.len() as f32;
+                let scroll_nb_bottom = (scroll_nb_bottom * (h as f32)).ceil() as u16;
+                let scroll_nb_top = h - bar_nb - scroll_nb_bottom;
+                (scroll_nb_bottom, scroll_nb_top)
+            } else {
+                let scroll_nb_top = self.scroll as f32 / self.stdout.len() as f32;
+                let scroll_nb_top = (scroll_nb_top * (h) as f32).ceil() as u16;
+                let scroll_nb_bottom = h - bar_nb - scroll_nb_top;
+                (scroll_nb_bottom, scroll_nb_top)
+            };
+
+            for i in 1..=scroll_nb_top {
+                subbuffer.push(format!("{}{}", cursor::Goto(x + w + 1, y + i), "│"));
+            }
+            for i in scroll_nb_top + 1..=scroll_nb_top + bar_nb {
+                subbuffer.push(format!("{}{}", cursor::Goto(x + w + 1, y + i), "█"));
+            }
+            for i in scroll_nb_top + bar_nb + 1..=scroll_nb_top + bar_nb + scroll_nb_bottom {
+                subbuffer.push(format!("{}{}", cursor::Goto(x + w + 1, y + i), "│"));
+            }
+
+            subbuffer.push(format!("{}{}", cursor::Goto(x + w + 1, y + h), "▼"));
+
+            buffer.push(subbuffer.join(""));
         }
 
         buffer.push(format!("{}", style::Reset));
