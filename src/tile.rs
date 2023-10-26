@@ -448,8 +448,6 @@ impl Tile {
                     }
                     buffer.push(spaces);
 
-                    eprintln!("Clear {}", max_char_index);
-
                     line_index += 1;
                     current_char_index = 0;
                     max_char_index = 0;
