@@ -97,6 +97,7 @@ impl TileBuilder {
             counting: true,
             column_number: 0,
             pty: None,
+            sticky: true,
         })
     }
 }
@@ -142,6 +143,9 @@ pub struct Tile {
 
     /// The PTY of the command running in the tile.
     pub pty: Option<Pty>,
+
+    /// Whether the tile should autoscroll.
+    pub sticky: bool,
 }
 
 impl Tile {
@@ -303,9 +307,8 @@ impl Tile {
         }
 
         // Autoscroll whene content arrives on stdout
-        self.scroll = self.stdout.len() as isize - 1 - (self.inner_size.1 as isize);
-        if self.scroll < 0 {
-            self.scroll = 0;
+        if self.sticky {
+            self.scroll = self.max_scroll();
         }
     }
 
@@ -582,21 +585,28 @@ impl Tile {
 
     /// Scrolls up one line.
     pub fn scroll_up(&mut self, step: isize) {
+        self.sticky = false;
         self.scroll = std::cmp::max(0, self.scroll - step);
     }
 
     /// Scrolls down one line.
     pub fn scroll_down(&mut self, step: isize) {
-        self.scroll = std::cmp::min(self.max_scroll(), self.scroll + step);
+        let max_scroll = self.max_scroll();
+        self.scroll = std::cmp::min(max_scroll, self.scroll + step);
+        if self.scroll == max_scroll {
+            self.sticky = true;
+        }
     }
 
     /// Scrolls up one line.
     pub fn scroll_full_up(&mut self) {
+        self.sticky = false;
         self.scroll = 0;
     }
 
     /// Scrolls down one line.
     pub fn scroll_full_down(&mut self) {
+        self.sticky = true;
         self.scroll = self.max_scroll()
     }
 
