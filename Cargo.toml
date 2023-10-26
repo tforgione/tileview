@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 pty-process = "0.4.0"
 termion = "2.0.1"
+unicode-width = "0.1.11"

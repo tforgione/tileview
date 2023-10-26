@@ -8,6 +8,8 @@ use std::thread;
 use pty_process::blocking::Command;
 use pty_process::blocking::Pty;
 
+use unicode_width::UnicodeWidthChar;
+
 use termion::{color, cursor, style};
 
 use crate::{utils, Msg};
@@ -252,6 +254,7 @@ impl Tile {
             if c == '\x1b' {
                 self.counting = false;
             }
+
             match c {
                 '\n' => {
                     self.stdout.last_mut().unwrap().push(c);
@@ -267,7 +270,10 @@ impl Tile {
                 _ => {
                     self.stdout.last_mut().unwrap().push(c);
 
-                    if self.counting {
+                    // Emoji variation selectors have no length
+                    let is_variation_selector = c >= '\u{fe00}' && c <= '\u{fe0f}';
+
+                    if self.counting && !is_variation_selector {
                         self.column_number += 1;
                         if self.column_number == self.inner_size.0 + 1 {
                             self.stdout.push(String::new());
@@ -380,7 +386,7 @@ impl Tile {
             };
 
             if c == '\x1b' {
-                let mut subbuffer = String::from(c);
+                let mut subbuffer = vec![c];
 
                 loop {
                     let next = match char_iter.next() {
@@ -404,8 +410,8 @@ impl Tile {
                     }
                 }
 
-                match &subbuffer[0..3] {
-                    "\x1b[K" => {
+                match (subbuffer.get(0), subbuffer.get(1), subbuffer.get(2)) {
+                    (Some('\x1b'), Some('['), Some('K')) => {
                         if current_char_index < w {
                             let mut spaces = String::new();
                             for _ in current_char_index..w {
@@ -425,7 +431,7 @@ impl Tile {
                             ));
                         }
                     }
-                    _ => buffer.push(subbuffer),
+                    _ => buffer.push(subbuffer.into_iter().collect()),
                 }
 
                 continue;
@@ -441,6 +447,8 @@ impl Tile {
                         spaces.push(DELETE_CHAR);
                     }
                     buffer.push(spaces);
+
+                    eprintln!("Clear {}", max_char_index);
 
                     line_index += 1;
                     current_char_index = 0;
@@ -465,8 +473,13 @@ impl Tile {
                 }
 
                 _ => {
-                    current_char_index += 1;
-                    max_char_index = std::cmp::max(max_char_index, current_char_index);
+                    // Emoji variation selectors have no length
+                    let is_variation_selector = c >= '\u{fe00}' && c <= '\u{fe0f}';
+
+                    if !is_variation_selector {
+                        current_char_index += UnicodeWidthChar::width(c).unwrap_or(0) as u16;
+                        max_char_index = std::cmp::max(max_char_index, current_char_index);
+                    }
 
                     if current_char_index == w + 1 {
                         line_index += 1;

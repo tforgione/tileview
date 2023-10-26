@@ -90,13 +90,13 @@ impl<W: Write> Multiview<W> {
 
     /// Renders all the tiles of the multiview.
     pub fn render(&mut self) -> io::Result<()> {
-        let now = Instant::now();
+        // let now = Instant::now();
 
-        if now.duration_since(self.last_render) < Duration::from_millis(20) {
-            return Ok(());
-        }
+        // if now.duration_since(self.last_render) < Duration::from_millis(20) {
+        //     return Ok(());
+        // }
 
-        self.last_render = now;
+        // self.last_render = now;
         let mut buffer = vec![];
         for i in 0..self.tiles.len() {
             for j in 0..self.tiles[0].len() {
