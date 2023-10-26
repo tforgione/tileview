@@ -1,6 +1,6 @@
 //! This module contains everything related to tiles.
 
-use std::io::{self, Read};
+use std::io::Read;
 use std::process::Stdio;
 use std::sync::mpsc::Sender;
 use std::thread;
@@ -239,7 +239,19 @@ impl Tile {
             }
 
             sender
-                .send(Msg::Stdout(coords, format!("\n{}\n", line)))
+                .send(Msg::Stdout(
+                    coords,
+                    format!(
+                        "\n{}{}{}\n",
+                        if code == Some(0) {
+                            color::Green.fg_str()
+                        } else {
+                            color::Red.fg_str()
+                        },
+                        line,
+                        color::Reset.fg_str()
+                    ),
+                ))
                 .unwrap();
         });
 
@@ -611,15 +623,28 @@ impl Tile {
     }
 
     /// Kill the child command.
-    pub fn kill(&mut self) -> io::Result<()> {
+    pub fn kill(&mut self) {
         self.pty = None;
-        Ok(())
     }
 
     /// Restarts the child command.
-    pub fn restart(&mut self) -> io::Result<()> {
-        self.kill()?;
+    pub fn restart(&mut self) {
+        self.kill();
         self.start();
-        Ok(())
+    }
+
+    /// Draws a line.
+    pub fn add_line(&mut self) {
+        let mut line = String::new();
+        for _ in 0..self.inner_size.0 - 1 {
+            line.push('─');
+        }
+
+        self.sender
+            .send(Msg::Stdout(
+                self.coords,
+                format!("\n{}{}\n", color::Reset.fg_str(), line),
+            ))
+            .unwrap();
     }
 }

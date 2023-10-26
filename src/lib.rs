@@ -170,37 +170,48 @@ impl<W: Write> Multiview<W> {
     }
 
     /// Restarts the selected tile.
-    pub fn restart(&mut self) -> io::Result<()> {
+    pub fn restart(&mut self) {
         let tile = self.tile_mut(self.selected);
-        tile.restart()
+        tile.restart();
     }
 
     /// Restarts all tiles.
-    pub fn restart_all(&mut self) -> io::Result<()> {
+    pub fn restart_all(&mut self) {
         for row in &mut self.tiles {
             for tile in row {
-                tile.restart()?;
+                tile.restart();
             }
         }
-
-        Ok(())
     }
 
     /// Kills the selected tile.
-    pub fn kill(&mut self) -> io::Result<()> {
+    pub fn kill(&mut self) {
         let tile = self.tile_mut(self.selected);
-        tile.kill()
+        tile.kill();
     }
 
     /// Kills all tiles.
-    pub fn kill_all(&mut self) -> io::Result<()> {
+    pub fn kill_all(&mut self) {
         for row in &mut self.tiles {
             for tile in row {
-                tile.kill()?;
+                tile.kill();
             }
         }
+    }
 
-        Ok(())
+    /// Adds a line to the current tile.
+    pub fn add_line(&mut self) {
+        let tile = self.tile_mut(self.selected);
+        tile.add_line();
+    }
+
+    /// Adds a line to every tile.
+    pub fn add_line_all(&mut self) {
+        for row in &mut self.tiles {
+            for tile in row {
+                tile.add_line();
+            }
+        }
     }
 
     /// Exits.
@@ -209,7 +220,7 @@ impl<W: Write> Multiview<W> {
 
         for row in &mut self.tiles {
             for tile in row {
-                tile.kill().ok();
+                tile.kill()
             }
         }
     }
@@ -222,14 +233,16 @@ impl<W: Write> Multiview<W> {
             Msg::Stdout(coords, line) => self.push_stdout(coords, line),
             Msg::Stderr(coords, line) => self.push_stderr(coords, line),
             Msg::Click(x, y) => self.select_tile((x, y), self.term_size),
-            Msg::Restart => self.restart()?,
-            Msg::RestartAll => self.restart_all()?,
-            Msg::Kill => self.kill()?,
-            Msg::KillAll => self.kill_all()?,
+            Msg::Restart => self.restart(),
+            Msg::RestartAll => self.restart_all(),
+            Msg::Kill => self.kill(),
+            Msg::KillAll => self.kill_all(),
             Msg::ScrollDown(step) => self.scroll_down(step),
             Msg::ScrollUp(step) => self.scroll_up(step),
             Msg::ScrollFullDown => self.scroll_full_down(),
             Msg::ScrollFullUp => self.scroll_full_up(),
+            Msg::AddLine => self.add_line(),
+            Msg::AddLineAll => self.add_line_all(),
             Msg::Exit => self.exit(),
         }
 
@@ -278,6 +291,12 @@ pub enum Msg {
 
     /// Scroll to the bottom of the log.
     ScrollFullDown,
+
+    /// Adds a line to the current tile.
+    AddLine,
+
+    /// Adds a line to every tile.
+    AddLineAll,
 
     /// The program was asked to exit.
     Exit,
@@ -349,6 +368,8 @@ pub fn main() -> io::Result<()> {
                 Event::Key(Key::Char('R')) => sender.send(Msg::RestartAll).unwrap(),
                 Event::Key(Key::Char('k')) => sender.send(Msg::Kill).unwrap(),
                 Event::Key(Key::Char('K')) => sender.send(Msg::KillAll).unwrap(),
+                Event::Key(Key::Char('l')) => sender.send(Msg::AddLine).unwrap(),
+                Event::Key(Key::Char('L')) => sender.send(Msg::AddLineAll).unwrap(),
                 Event::Key(Key::Down) => sender.send(Msg::ScrollDown(1)).unwrap(),
                 Event::Key(Key::Up) => sender.send(Msg::ScrollUp(1)).unwrap(),
                 Event::Key(Key::End) => sender.send(Msg::ScrollFullDown).unwrap(),
