@@ -289,7 +289,7 @@ impl Tile {
         }
 
         // Autoscroll whene content arrives on stdout
-        self.scroll = self.stdout.len() as isize - 2 - (self.inner_size.1 as isize);
+        self.scroll = self.stdout.len() as isize - 1 - (self.inner_size.1 as isize);
         if self.scroll < 0 {
             self.scroll = 0;
         }
@@ -497,7 +497,7 @@ impl Tile {
             }
         }
 
-        if last_line_index <= h {
+        if last_line_index as u16 - scroll <= h {
             let mut spaces = format!(
                 "{}",
                 cursor::Goto(x + max_char_index, y + last_line_index as u16 - scroll)
@@ -522,7 +522,7 @@ impl Tile {
 
     /// Scrolls down one line.
     pub fn scroll_down(&mut self) {
-        if self.scroll + (self.inner_size.1 as isize) < self.stdout.len() as isize - 2 {
+        if self.scroll + (self.inner_size.1 as isize) < self.stdout.len() as isize - 1 {
             self.scroll += 1;
         }
     }
@@ -534,7 +534,7 @@ impl Tile {
 
     /// Scrolls down one line.
     pub fn scroll_full_down(&mut self) {
-        self.scroll = self.stdout.len() as isize - self.inner_size.1 as isize - 2;
+        self.scroll = self.stdout.len() as isize - self.inner_size.1 as isize - 1;
         if self.scroll < 0 {
             self.scroll = 0;
         }
