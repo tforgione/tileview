@@ -135,15 +135,15 @@ impl<W: Write> Multiview<W> {
     }
 
     /// Scrolls down the current selected tile.
-    pub fn scroll_down(&mut self) {
+    pub fn scroll_down(&mut self, step: isize) {
         let tile = self.tile_mut(self.selected);
-        tile.scroll_down();
+        tile.scroll_down(step);
     }
 
     /// Scrolls up the current selected tile.
-    pub fn scroll_up(&mut self) {
+    pub fn scroll_up(&mut self, step: isize) {
         let tile = self.tile_mut(self.selected);
-        tile.scroll_up();
+        tile.scroll_up(step);
     }
 
     /// Scrolls down to the bottom of the current selected tile.
@@ -222,12 +222,12 @@ impl<W: Write> Multiview<W> {
             Msg::Stdout(coords, line) => self.push_stdout(coords, line),
             Msg::Stderr(coords, line) => self.push_stderr(coords, line),
             Msg::Click(x, y) => self.select_tile((x, y), self.term_size),
-            Msg::ScrollDown => self.scroll_down(),
             Msg::Restart => self.restart()?,
             Msg::RestartAll => self.restart_all()?,
             Msg::Kill => self.kill()?,
             Msg::KillAll => self.kill_all()?,
-            Msg::ScrollUp => self.scroll_up(),
+            Msg::ScrollDown(step) => self.scroll_down(step),
+            Msg::ScrollUp(step) => self.scroll_up(step),
             Msg::ScrollFullDown => self.scroll_full_down(),
             Msg::ScrollFullUp => self.scroll_full_up(),
             Msg::Exit => self.exit(),
@@ -268,10 +268,10 @@ pub enum Msg {
     KillAll,
 
     /// Scroll up one line.
-    ScrollUp,
+    ScrollUp(isize),
 
     /// Scroll down one line.
-    ScrollDown,
+    ScrollDown(isize),
 
     /// Scroll to the top of the log.
     ScrollFullUp,
@@ -349,13 +349,13 @@ pub fn main() -> io::Result<()> {
                 Event::Key(Key::Char('R')) => sender.send(Msg::RestartAll).unwrap(),
                 Event::Key(Key::Char('k')) => sender.send(Msg::Kill).unwrap(),
                 Event::Key(Key::Char('K')) => sender.send(Msg::KillAll).unwrap(),
-                Event::Key(Key::Down) => sender.send(Msg::ScrollDown).unwrap(),
-                Event::Key(Key::Up) => sender.send(Msg::ScrollUp).unwrap(),
+                Event::Key(Key::Down) => sender.send(Msg::ScrollDown(1)).unwrap(),
+                Event::Key(Key::Up) => sender.send(Msg::ScrollUp(1)).unwrap(),
                 Event::Key(Key::End) => sender.send(Msg::ScrollFullDown).unwrap(),
                 Event::Key(Key::Home) => sender.send(Msg::ScrollFullUp).unwrap(),
                 Event::Mouse(MouseEvent::Press(p, x, y)) => match p {
-                    MouseButton::WheelUp => sender.send(Msg::ScrollUp).unwrap(),
-                    MouseButton::WheelDown => sender.send(Msg::ScrollDown).unwrap(),
+                    MouseButton::WheelUp => sender.send(Msg::ScrollUp(3)).unwrap(),
+                    MouseButton::WheelDown => sender.send(Msg::ScrollDown(3)).unwrap(),
                     MouseButton::Left => sender.send(Msg::Click(x, y)).unwrap(),
                     _ => (),
                 },

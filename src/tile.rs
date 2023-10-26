@@ -1,7 +1,7 @@
 //! This module contains everything related to tiles.
 
 use std::io::{self, Read};
-use std::process::{Child, Stdio};
+use std::process::Stdio;
 use std::sync::mpsc::Sender;
 use std::thread;
 
@@ -96,7 +96,7 @@ impl TileBuilder {
             scroll: 0,
             counting: true,
             column_number: 0,
-            child: None,
+            pty: None,
         })
     }
 }
@@ -140,8 +140,8 @@ pub struct Tile {
     /// The number of the current column.
     pub column_number: u16,
 
-    /// The PTY and the child process of the command running in the tile.
-    pub child: Option<(Pty, Child)>,
+    /// The PTY of the command running in the tile.
+    pub pty: Option<Pty>,
 }
 
 impl Tile {
@@ -195,23 +195,37 @@ impl Tile {
                 }
             }
 
+            let code = child.wait().unwrap().code();
+
             sender
                 .send(Msg::Stdout(coords, String::from("\n")))
                 .unwrap();
 
-            let code = 0;
-
-            let exit_string = format!(
-                "{}{}Command exited with return code {}\r{}",
-                style::Bold,
-                if code == 0 {
-                    color::Green.fg_str()
-                } else {
-                    color::Red.fg_str()
-                },
-                code,
-                style::Reset,
-            );
+            let exit_string = match code {
+                Some(0) => format!(
+                    "{}{}Command finished successfully\r{}",
+                    style::Bold,
+                    color::Green.fg_str(),
+                    style::Reset,
+                ),
+                Some(x) => {
+                    format!(
+                        "{}{}Command failed with exit code {}\r{}",
+                        style::Bold,
+                        color::Red.fg_str(),
+                        x,
+                        style::Reset,
+                    )
+                }
+                None => {
+                    format!(
+                        "{}{}Command was interrupted\r{}",
+                        style::Bold,
+                        color::Red.fg_str(),
+                        style::Reset,
+                    )
+                }
+            };
 
             sender.send(Msg::Stdout(coords, exit_string)).unwrap();
 
@@ -245,7 +259,7 @@ impl Tile {
             }
         });
 
-        self.child = Some((pty, child));
+        self.pty = Some(pty);
     }
 
     /// Push content into the stdout of the tile.
@@ -558,18 +572,22 @@ impl Tile {
         buffer.join("")
     }
 
+    /// Returns the max scroll value.
+    pub fn max_scroll(&self) -> isize {
+        std::cmp::max(
+            0,
+            self.stdout.len() as isize - self.inner_size.1 as isize - 1,
+        )
+    }
+
     /// Scrolls up one line.
-    pub fn scroll_up(&mut self) {
-        if self.scroll > 0 {
-            self.scroll -= 1;
-        }
+    pub fn scroll_up(&mut self, step: isize) {
+        self.scroll = std::cmp::max(0, self.scroll - step);
     }
 
     /// Scrolls down one line.
-    pub fn scroll_down(&mut self) {
-        if self.scroll + (self.inner_size.1 as isize) < self.stdout.len() as isize - 1 {
-            self.scroll += 1;
-        }
+    pub fn scroll_down(&mut self, step: isize) {
+        self.scroll = std::cmp::min(self.max_scroll(), self.scroll + step);
     }
 
     /// Scrolls up one line.
@@ -579,18 +597,12 @@ impl Tile {
 
     /// Scrolls down one line.
     pub fn scroll_full_down(&mut self) {
-        self.scroll = self.stdout.len() as isize - self.inner_size.1 as isize - 1;
-        if self.scroll < 0 {
-            self.scroll = 0;
-        }
+        self.scroll = self.max_scroll()
     }
 
     /// Kill the child command.
     pub fn kill(&mut self) -> io::Result<()> {
-        if let Some((_, child)) = self.child.as_mut() {
-            child.kill()?;
-        }
-
+        self.pty = None;
         Ok(())
     }
 
