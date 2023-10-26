@@ -10,10 +10,12 @@ use termion::screen::IntoAlternateScreen;
 use termion::terminal_size;
 use termion::{clear, cursor};
 
+use tile::{Tile, TileBuilder};
+
 pub mod tile;
 pub mod utils;
 
-use tile::{Tile, TileBuilder};
+const DELAY: Duration = Duration::from_millis(20);
 
 /// Multiple applications running in a single terminal.
 struct Multiview<W: Write> {
@@ -29,19 +31,31 @@ struct Multiview<W: Write> {
     /// Whether we need to refresh the UI.
     pub refresh_ui: bool,
 
+    /// Whether we need to refresh the tiles.
+    pub refresh_tiles: bool,
+
     /// Last time when the rendering was performed.
     pub last_render: Instant,
+
+    /// The size of the terminal.
+    pub term_size: (u16, u16),
 }
 
 impl<W: Write> Multiview<W> {
     /// Creates a new multiview.
-    pub fn new(stdout: W, tiles: Vec<Vec<Tile>>) -> io::Result<Multiview<W>> {
+    pub fn new(
+        stdout: W,
+        tiles: Vec<Vec<Tile>>,
+        term_size: (u16, u16),
+    ) -> io::Result<Multiview<W>> {
         let mut multiview = Multiview {
             stdout,
             tiles,
             selected: (0, 0),
             refresh_ui: true,
+            refresh_tiles: false,
             last_render: Instant::now(),
+            term_size,
         };
 
         write!(
@@ -89,14 +103,19 @@ impl<W: Write> Multiview<W> {
     }
 
     /// Renders all the tiles of the multiview.
-    pub fn render(&mut self) -> io::Result<()> {
-        // let now = Instant::now();
+    pub fn render(&mut self, force: bool) -> io::Result<()> {
+        if !self.refresh_tiles {
+            return Ok(());
+        }
 
-        // if now.duration_since(self.last_render) < Duration::from_millis(20) {
-        //     return Ok(());
-        // }
+        let now = Instant::now();
 
-        // self.last_render = now;
+        if now.duration_since(self.last_render) < DELAY && !force {
+            return Ok(());
+        }
+
+        self.last_render = now;
+
         let mut buffer = vec![];
         for i in 0..self.tiles.len() {
             for j in 0..self.tiles[0].len() {
@@ -108,6 +127,7 @@ impl<W: Write> Multiview<W> {
         }
 
         self.refresh_ui = false;
+        self.refresh_tiles = false;
         write!(self.stdout, "{}", buffer.join(""))?;
         self.stdout.flush()?;
 
@@ -193,6 +213,28 @@ impl<W: Write> Multiview<W> {
             }
         }
     }
+
+    /// Treats a message.
+    pub fn manage_msg(&mut self, msg: Msg) -> io::Result<()> {
+        self.refresh_tiles = true;
+
+        match msg {
+            Msg::Stdout(coords, line) => self.push_stdout(coords, line),
+            Msg::Stderr(coords, line) => self.push_stderr(coords, line),
+            Msg::Click(x, y) => self.select_tile((x, y), self.term_size),
+            Msg::ScrollDown => self.scroll_down(),
+            Msg::Restart => self.restart()?,
+            Msg::RestartAll => self.restart_all()?,
+            Msg::Kill => self.kill()?,
+            Msg::KillAll => self.kill_all()?,
+            Msg::ScrollUp => self.scroll_up(),
+            Msg::ScrollFullDown => self.scroll_full_down(),
+            Msg::ScrollFullUp => self.scroll_full_up(),
+            Msg::Exit => self.exit(),
+        }
+
+        Ok(())
+    }
 }
 
 impl<W: Write> Drop for Multiview<W> {
@@ -202,6 +244,7 @@ impl<W: Write> Drop for Multiview<W> {
 }
 
 /// An event that can be sent in channels.
+#[derive(PartialEq, Eq)]
 pub enum Msg {
     /// An stdout line arrived.
     Stdout((u16, u16), String),
@@ -288,8 +331,8 @@ pub fn main() -> io::Result<()> {
     let stdout = stdout.into_alternate_screen()?;
     let stdout = MouseTerminal::from(stdout);
 
-    let mut multiview = Multiview::new(stdout, tiles)?;
-    multiview.render()?;
+    let mut multiview = Multiview::new(stdout, tiles, term_size)?;
+    multiview.render(true)?;
 
     for row in &mut multiview.tiles {
         for tile in row {
@@ -323,26 +366,15 @@ pub fn main() -> io::Result<()> {
     });
 
     loop {
-        match receiver.recv() {
-            Ok(Msg::Stdout(coords, line)) => multiview.push_stdout(coords, line),
-            Ok(Msg::Stderr(coords, line)) => multiview.push_stderr(coords, line),
-            Ok(Msg::Click(x, y)) => multiview.select_tile((x, y), term_size),
-            Ok(Msg::ScrollDown) => multiview.scroll_down(),
-            Ok(Msg::Restart) => multiview.restart()?,
-            Ok(Msg::RestartAll) => multiview.restart_all()?,
-            Ok(Msg::Kill) => multiview.kill()?,
-            Ok(Msg::KillAll) => multiview.kill_all()?,
-            Ok(Msg::ScrollUp) => multiview.scroll_up(),
-            Ok(Msg::ScrollFullDown) => multiview.scroll_full_down(),
-            Ok(Msg::ScrollFullUp) => multiview.scroll_full_up(),
-            Ok(Msg::Exit) => {
-                multiview.exit();
+        if let Ok(msg) = receiver.recv_timeout(DELAY) {
+            let is_exit = msg == Msg::Exit;
+            multiview.manage_msg(msg)?;
+            if is_exit {
                 break;
             }
-            Err(_) => (),
         }
 
-        multiview.render()?;
+        multiview.render(false)?;
     }
 
     Ok(())
