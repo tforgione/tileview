@@ -275,7 +275,7 @@ impl Tile {
 
                     if self.counting && !is_variation_selector {
                         self.column_number += 1;
-                        if self.column_number == self.inner_size.0 + 1 {
+                        if self.column_number == self.inner_size.0 {
                             self.stdout.push(String::new());
                             self.column_number = 0;
                         }
