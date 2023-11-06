@@ -36,18 +36,11 @@ struct Multiview<W: Write> {
 
     /// Last time when the rendering was performed.
     pub last_render: Instant,
-
-    /// The size of the terminal.
-    pub term_size: (u16, u16),
 }
 
 impl<W: Write> Multiview<W> {
     /// Creates a new multiview.
-    pub fn new(
-        stdout: W,
-        tiles: Vec<Vec<Tile>>,
-        term_size: (u16, u16),
-    ) -> io::Result<Multiview<W>> {
+    pub fn new(stdout: W, tiles: Vec<Vec<Tile>>) -> io::Result<Multiview<W>> {
         let mut multiview = Multiview {
             stdout,
             tiles,
@@ -55,7 +48,6 @@ impl<W: Write> Multiview<W> {
             refresh_ui: true,
             refresh_tiles: false,
             last_render: Instant::now(),
-            term_size,
         };
 
         write!(
@@ -82,11 +74,17 @@ impl<W: Write> Multiview<W> {
     }
 
     /// Sets the selected tile from (x, y) coordinates.
-    pub fn select_tile(&mut self, (x, y): (u16, u16), term_size: (u16, u16)) {
-        let w = term_size.0 / self.tiles[0].len() as u16;
-        let h = term_size.1 / self.tiles.len() as u16;
-
-        self.selected = (y / h, x / w);
+    pub fn select_tile(&mut self, (x, y): (u16, u16)) {
+        // Ugly but working
+        for (i, row) in self.tiles.iter().enumerate() {
+            for (j, tile) in row.iter().enumerate() {
+                if tile.outer_position.0 <= x && x < tile.outer_position.0 + tile.outer_size.0 {
+                    if tile.outer_position.1 <= y && y < tile.outer_position.1 + tile.outer_size.1 {
+                        self.selected = (i as u16, j as u16);
+                    }
+                }
+            }
+        }
         self.refresh_ui = true;
     }
 
@@ -118,7 +116,7 @@ impl<W: Write> Multiview<W> {
 
         let mut buffer = vec![];
         for i in 0..self.tiles.len() {
-            for j in 0..self.tiles[0].len() {
+            for j in 0..self.tiles[i].len() {
                 if self.refresh_ui {
                     buffer.push(self.render_tile_border((i as u16, j as u16)));
                 }
@@ -232,7 +230,7 @@ impl<W: Write> Multiview<W> {
         match msg {
             Msg::Stdout(coords, line) => self.push_stdout(coords, line),
             Msg::Stderr(coords, line) => self.push_stderr(coords, line),
-            Msg::Click(x, y) => self.select_tile((x, y), self.term_size),
+            Msg::Click(x, y) => self.select_tile((x, y)),
             Msg::Restart => self.restart(),
             Msg::RestartAll => self.restart_all(),
             Msg::Kill => self.kill(),
@@ -308,9 +306,33 @@ pub fn main() -> io::Result<()> {
 
     let args = env::args().skip(1).collect::<Vec<_>>();
 
+    let mut is_row_major = true;
+
+    for arg in &args {
+        if arg == "//" {
+            is_row_major = false;
+            break;
+        }
+
+        if arg == "::" {
+            is_row_major = true;
+            break;
+        }
+    }
+
+    let (first_split, second_split) = if is_row_major {
+        ("//", "::")
+    } else {
+        ("::", "//")
+    };
+
     let tiles = args
-        .split(|x| x == "//")
-        .map(|x| x.split(|y| y == "::").enumerate().collect::<Vec<_>>())
+        .split(|x| x == first_split)
+        .map(|x| {
+            x.split(|y| y == second_split)
+                .enumerate()
+                .collect::<Vec<_>>()
+        })
         .enumerate()
         .map(|(i, tiles)| {
             tiles
@@ -322,16 +344,23 @@ pub fn main() -> io::Result<()> {
 
     let term_size = terminal_size()?;
 
-    let tile_size = (
-        term_size.0 / tiles[0].len() as u16,
-        term_size.1 / tiles.len() as u16,
-    );
+    let col_len = tiles.len() as u16;
 
     let tiles = tiles
         .into_iter()
         .map(|row| {
+            let row_len = row.len() as u16;
+
+            let tile_size = if is_row_major {
+                (term_size.0 / row_len, term_size.1 / col_len)
+            } else {
+                (term_size.0 / col_len, term_size.1 / row_len)
+            };
+
             row.into_iter()
                 .map(|((i, j), tile)| {
+                    let (i, j) = if is_row_major { (i, j) } else { (j, i) };
+
                     TileBuilder::new()
                         .command(tile.into())
                         .coords((i as u16, j as u16))
@@ -350,7 +379,7 @@ pub fn main() -> io::Result<()> {
     let stdout = stdout.into_alternate_screen()?;
     let stdout = MouseTerminal::from(stdout);
 
-    let mut multiview = Multiview::new(stdout, tiles, term_size)?;
+    let mut multiview = Multiview::new(stdout, tiles)?;
     multiview.render(true)?;
 
     for row in &mut multiview.tiles {

@@ -165,12 +165,44 @@ impl Tile {
         let pty = Pty::new().unwrap();
         pty.resize(pty_process::Size::new(size.1, size.0)).unwrap();
 
-        let mut child = Command::new(&clone[0])
+        let child = Command::new(&clone[0])
             .args(&clone[1..])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn(&pty.pts().unwrap())
-            .unwrap();
+            .spawn(&pty.pts().unwrap());
+
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => {
+                let exit_string = format!(
+                    "{}{}Couldn't run command: {}\r{}",
+                    style::Bold,
+                    color::Red.fg_str(),
+                    e,
+                    style::Reset,
+                );
+
+                sender.send(Msg::Stdout(coords, exit_string)).unwrap();
+
+                let mut line = String::new();
+                for _ in 0..size.0 - 1 {
+                    line.push('─');
+                }
+
+                sender
+                    .send(Msg::Stdout(
+                        coords,
+                        format!(
+                            "\n{}{}{}\n",
+                            color::Red.fg_str(),
+                            line,
+                            color::Reset.fg_str()
+                        ),
+                    ))
+                    .unwrap();
+                return;
+            }
+        };
 
         let mut stdout = child.stdout.take().unwrap();
         let mut stderr = child.stderr.take().unwrap();
