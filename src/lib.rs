@@ -359,12 +359,12 @@ pub fn main() -> io::Result<()> {
 
             row.into_iter()
                 .map(|((i, j), tile)| {
-                    let (i, j) = if is_row_major { (i, j) } else { (j, i) };
+                    let (p_i, p_j) = if is_row_major { (i, j) } else { (j, i) };
 
                     TileBuilder::new()
                         .command(tile.into())
                         .coords((i as u16, j as u16))
-                        .position((j as u16 * tile_size.0 + 1, i as u16 * tile_size.1 + 1))
+                        .position((p_j as u16 * tile_size.0 + 1, p_i as u16 * tile_size.1 + 1))
                         .size(tile_size)
                         .sender(sender.clone())
                         .build()
