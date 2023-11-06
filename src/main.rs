@@ -1,5 +1,5 @@
 fn main() {
-    if let Err(e) = multiview::main() {
+    if let Err(e) = tileview::main() {
         eprintln!("An error occured: {}", e);
     }
 }

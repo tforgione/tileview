@@ -43,15 +43,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da2479e8c062e40bf0066ffa0bc823de0a9368974af99c9f6df941d2c231e03f"
 
 [[package]]
-name = "multiview"
-version = "0.1.0"
-dependencies = [
- "pty-process",
- "termion",
- "unicode-width",
-]
-
-[[package]]
 name = "numtoa"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -109,6 +100,15 @@ dependencies = [
  "numtoa",
  "redox_syscall",
  "redox_termios",
+]
+
+[[package]]
+name = "tileview"
+version = "0.1.0"
+dependencies = [
+ "pty-process",
+ "termion",
+ "unicode-width",
 ]
 
 [[package]]
