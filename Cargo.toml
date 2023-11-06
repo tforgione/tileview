@@ -2,7 +2,7 @@
 name = "tileview"
 description = "run tiled commands in a single terminal"
 repository = "https://github.com/tforgione/tileview"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Thomas Forgione"]
 edition = "2021"
 license = "GPL-3.0"
