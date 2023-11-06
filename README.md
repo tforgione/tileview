@@ -2,6 +2,7 @@
 
 *Run many commands and watch all outputs in a single terminal*
 
+![multiview preview](/screenshots/row-major.png)
 
 ## Installation
 
@@ -20,10 +21,14 @@ Split your terminal in two rows, the first containing three columns, and the sec
 multiview cmd1 :: cmd2 :: cmd3 // cmd4 :: cmd5
 ```
 
+![multiview row major preview](/screenshots/row-major.png)
+
 Split your terminal in two columns, the first containing three rows, and the second containing one row:
 ```sh
 multiview cmd1 // cmd2 // cmd3 :: cmd4 // cmd5
 ```
+
+![multiview col major preview](/screenshots/col-major.png)
 
 ## Colors
 
