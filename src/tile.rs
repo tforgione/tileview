@@ -264,26 +264,8 @@ impl Tile {
             };
 
             sender.send(Msg::Stdout(coords, exit_string)).unwrap();
-
-            let mut line = String::new();
-            for _ in 0..size.0 - 1 {
-                line.push('─');
-            }
-
             sender
-                .send(Msg::Stdout(
-                    coords,
-                    format!(
-                        "\n{}{}{}\n",
-                        if code == Some(0) {
-                            color::Green.fg_str()
-                        } else {
-                            color::Red.fg_str()
-                        },
-                        line,
-                        color::Reset.fg_str()
-                    ),
-                ))
+                .send(Msg::AddFinishLine(coords, code == Some(0)))
                 .unwrap();
         });
 
@@ -665,6 +647,23 @@ impl Tile {
         self.start();
     }
 
+    /// Repositions the tile.
+    pub fn reposition(&mut self, (i, j): (u16, u16)) {
+        self.outer_position = (i, j);
+        self.inner_position = (i + 2, j + 3);
+    }
+
+    /// Resizes the tile.
+    pub fn resize(&mut self, (w, h): (u16, u16)) {
+        self.outer_size = (w, h);
+        self.inner_size = (w - 4, h - 5);
+
+        let old_stdout = std::mem::replace(&mut self.stdout, vec![String::new()]);
+        for s in old_stdout {
+            self.push_stdout(s);
+        }
+    }
+
     /// Draws a line.
     pub fn add_line(&mut self) {
         let mut line = String::new();
@@ -676,6 +675,30 @@ impl Tile {
             .send(Msg::Stdout(
                 self.coords,
                 format!("\n{}{}\n", color::Reset.fg_str(), line),
+            ))
+            .unwrap();
+    }
+
+    /// Draws a finish line, green if success or red if failure.
+    pub fn add_finish_line(&mut self, success: bool) {
+        let mut line = String::new();
+        for _ in 0..self.inner_size.0 - 1 {
+            line.push('─');
+        }
+
+        self.sender
+            .send(Msg::Stdout(
+                self.coords,
+                format!(
+                    "\n{}{}{}\n",
+                    color::Reset.fg_str(),
+                    if success {
+                        color::Green.fg_str()
+                    } else {
+                        color::Red.fg_str()
+                    },
+                    line
+                ),
             ))
             .unwrap();
     }

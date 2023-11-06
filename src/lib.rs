@@ -114,7 +114,12 @@ impl<W: Write> Multiview<W> {
 
         self.last_render = now;
 
-        let mut buffer = vec![];
+        let mut buffer = if self.refresh_ui {
+            vec![format!("{}", clear::All)]
+        } else {
+            vec![]
+        };
+
         for i in 0..self.tiles.len() {
             for j in 0..self.tiles[i].len() {
                 if self.refresh_ui {
@@ -212,6 +217,12 @@ impl<W: Write> Multiview<W> {
         }
     }
 
+    /// Adds a finish line to the specified tile.
+    pub fn add_finish_line(&mut self, coords: (u16, u16), success: bool) {
+        let tile = self.tile_mut(coords);
+        tile.add_finish_line(success);
+    }
+
     /// Exits.
     pub fn exit(&mut self) {
         write!(self.stdout, "{}", cursor::Show).ok();
@@ -241,6 +252,7 @@ impl<W: Write> Multiview<W> {
             Msg::ScrollFullUp => self.scroll_full_up(),
             Msg::AddLine => self.add_line(),
             Msg::AddLineAll => self.add_line_all(),
+            Msg::AddFinishLine(coords, success) => self.add_finish_line(coords, success),
             Msg::Exit => self.exit(),
         }
 
@@ -296,6 +308,9 @@ pub enum Msg {
     /// Adds a line to every tile.
     AddLineAll,
 
+    /// Adds the finish line to the tile.
+    AddFinishLine((u16, u16), bool),
+
     /// The program was asked to exit.
     Exit,
 }
@@ -342,7 +357,7 @@ pub fn main() -> io::Result<()> {
         })
         .collect::<Vec<_>>();
 
-    let term_size = terminal_size()?;
+    let mut term_size = terminal_size()?;
 
     let col_len = tiles.len() as u16;
 
@@ -422,6 +437,31 @@ pub fn main() -> io::Result<()> {
             if is_exit {
                 break;
             }
+        }
+
+        let new_term_size = terminal_size()?;
+
+        if term_size != new_term_size {
+            term_size = new_term_size;
+
+            for (i, row) in multiview.tiles.iter_mut().enumerate() {
+                let row_len = row.len() as u16;
+
+                let tile_size = if is_row_major {
+                    (term_size.0 / row_len, term_size.1 / col_len)
+                } else {
+                    (term_size.0 / col_len, term_size.1 / row_len)
+                };
+
+                for (j, tile) in row.iter_mut().enumerate() {
+                    let (p_i, p_j) = if is_row_major { (i, j) } else { (j, i) };
+                    tile.reposition((p_j as u16 * tile_size.0 + 1, p_i as u16 * tile_size.1 + 1));
+                    tile.resize(tile_size);
+                }
+            }
+
+            multiview.refresh_tiles = true;
+            multiview.refresh_ui = true;
         }
 
         multiview.render(false)?;
