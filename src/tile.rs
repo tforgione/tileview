@@ -658,6 +658,11 @@ impl Tile {
         self.outer_size = (w, h);
         self.inner_size = (w - 4, h - 5);
 
+        if let Some(pty) = self.pty.as_mut() {
+            pty.resize(pty_process::Size::new(self.inner_size.1, self.inner_size.0))
+                .unwrap();
+        }
+
         let old_stdout = std::mem::replace(&mut self.stdout, vec![String::new()]);
         for s in old_stdout {
             self.push_stdout(s);
