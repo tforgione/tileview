@@ -49,10 +49,6 @@ multiview unbuffer cmd1 :: unbuffer cmd2
   - `L`: draw a line on all tiles
   - `q`: quits
 
-## Limitations
-
-*Don't resize your terminal... just don't* :cry:
-
 ## History
 
 This is my attempt to rewrite [arjunmehta's multiview](https://github.com/arjunmehta/multiview) in rust.
