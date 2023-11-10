@@ -407,7 +407,9 @@ pub fn main() -> io::Result<()> {
         for c in stdin.events() {
             let evt = c.unwrap();
             match evt {
-                Event::Key(Key::Char('q')) => sender.send(Msg::Exit).unwrap(),
+                Event::Key(Key::Esc) | Event::Key(Key::Ctrl('c')) | Event::Key(Key::Char('q')) => {
+                    sender.send(Msg::Exit).unwrap()
+                }
                 Event::Key(Key::Char('r')) => sender.send(Msg::Restart).unwrap(),
                 Event::Key(Key::Char('R')) => sender.send(Msg::RestartAll).unwrap(),
                 Event::Key(Key::Char('k')) => sender.send(Msg::Kill).unwrap(),
