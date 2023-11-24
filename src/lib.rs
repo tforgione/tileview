@@ -247,6 +247,12 @@ impl<W: Write> Multiview<W> {
         tile.hold((i, j));
     }
 
+    /// Copies the current selection to the clipboard.
+    pub fn copy(&self) {
+        let tile = self.tile(self.selected);
+        tile.copy();
+    }
+
     /// Treats a message.
     pub fn manage_msg(&mut self, msg: Msg) -> io::Result<()> {
         self.refresh_tiles = true;
@@ -267,6 +273,7 @@ impl<W: Write> Multiview<W> {
             Msg::AddLine => self.add_line(),
             Msg::AddLineAll => self.add_line_all(),
             Msg::AddFinishLine(coords, success) => self.add_finish_line(coords, success),
+            Msg::Copy => self.copy(),
             Msg::Exit => self.exit(),
         }
 
@@ -327,6 +334,9 @@ pub enum Msg {
 
     /// Adds the finish line to the tile.
     AddFinishLine((u16, u16), bool),
+
+    /// Copies the selection to the clipboard.
+    Copy,
 
     /// The program was asked to exit.
     Exit,
@@ -427,6 +437,7 @@ pub fn main() -> io::Result<()> {
                 Event::Key(Key::Esc) | Event::Key(Key::Ctrl('c')) | Event::Key(Key::Char('q')) => {
                     sender.send(Msg::Exit).unwrap()
                 }
+                Event::Key(Key::Char('y')) => sender.send(Msg::Copy).unwrap(),
                 Event::Key(Key::Char('r')) => sender.send(Msg::Restart).unwrap(),
                 Event::Key(Key::Char('R')) => sender.send(Msg::RestartAll).unwrap(),
                 Event::Key(Key::Char('k')) => sender.send(Msg::Kill).unwrap(),

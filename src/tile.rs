@@ -1,5 +1,6 @@
 //! This module contains everything related to tiles.
 
+use std::cmp::Ordering;
 use std::io::Read;
 use std::process::Stdio;
 use std::sync::mpsc::Sender;
@@ -553,7 +554,6 @@ impl Tile {
                     }
 
                     if inside_selection {
-                        eprintln!("{} is inverted", c);
                         buffer.push(format!("{}{}{}", style::Invert, c, style::NoInvert));
                     } else {
                         buffer.push(format!("{}", c));
@@ -804,5 +804,93 @@ impl Tile {
     pub fn hold(&mut self, (i, j): (u16, u16)) {
         let (line, column) = self.locate((i, j));
         self.released = Some((line, column));
+    }
+
+    /// Copies the selection to the clipboard.
+    pub fn copy(&self) {
+        let (clicked, released) = match (self.clicked, self.released) {
+            (Some(a), Some(b)) => (a, b),
+            _ => return,
+        };
+
+        if clicked == released {
+            return;
+        }
+
+        let (line_start, line_end) = if clicked.0 < released.0 {
+            (clicked.0, released.0)
+        } else {
+            (released.0, clicked.0)
+        };
+
+        let (col_start, col_end) = match clicked.0.cmp(&released.0) {
+            Ordering::Less => (clicked.1, released.1),
+            Ordering::Greater => (released.1, clicked.1),
+            Ordering::Equal => {
+                if clicked.1 < released.1 {
+                    (clicked.1, released.1)
+                } else {
+                    (released.1, clicked.1)
+                }
+            }
+        };
+
+        let mut buffers = vec![String::new()];
+        let mut current_buffer = buffers.last_mut().unwrap();
+        let mut counting = true;
+        let mut count = 0;
+
+        let lines = self
+            .stdout
+            .iter()
+            .skip(line_start)
+            .take(line_end - line_start + 1)
+            .enumerate();
+
+        for (line_index, line) in lines {
+            let total_carriage_returns = line.chars().filter(|x| *x == '\r').count();
+            let mut carriage_returns = 0;
+
+            for c in line.chars() {
+                count += 1;
+
+                if c == '\r' {
+                    carriage_returns += 1;
+                }
+
+                if line_index == 0 && count <= col_start {
+                    continue;
+                }
+
+                if c == '\x1b' {
+                    counting = false;
+                }
+
+                if counting {
+                    match c {
+                        '\r' => current_buffer.clear(),
+                        '\n' => {
+                            count = 0;
+                            buffers.push(String::new());
+                            current_buffer = buffers.last_mut().unwrap();
+                        }
+                        _ => current_buffer.push(c),
+                    }
+                }
+
+                if c == 'm' || c == 'K' {
+                    counting = true;
+                }
+
+                if carriage_returns == total_carriage_returns
+                    && line_index == line_end - line_start
+                    && count == col_end
+                {
+                    break;
+                }
+            }
+        }
+
+        // TODO manage to copy the string to the clipboard
     }
 }
