@@ -234,6 +234,19 @@ impl<W: Write> Multiview<W> {
         }
     }
 
+    /// Triggers a click on a certain character.
+    pub fn click(&mut self, (i, j): (u16, u16)) {
+        self.select_tile((i, j));
+        let tile = self.tile_mut(self.selected);
+        tile.click((i, j));
+    }
+
+    /// Triggers a motion on a certain character.
+    pub fn hold(&mut self, (i, j): (u16, u16)) {
+        let tile = self.tile_mut(self.selected);
+        tile.hold((i, j));
+    }
+
     /// Treats a message.
     pub fn manage_msg(&mut self, msg: Msg) -> io::Result<()> {
         self.refresh_tiles = true;
@@ -241,7 +254,8 @@ impl<W: Write> Multiview<W> {
         match msg {
             Msg::Stdout(coords, line) => self.push_stdout(coords, line),
             Msg::Stderr(coords, line) => self.push_stderr(coords, line),
-            Msg::Click(x, y) => self.select_tile((x, y)),
+            Msg::Click(x, y) => self.click((x, y)),
+            Msg::Hold(x, y) => self.hold((x, y)),
             Msg::Restart => self.restart(),
             Msg::RestartAll => self.restart_all(),
             Msg::Kill => self.kill(),
@@ -277,6 +291,9 @@ pub enum Msg {
 
     /// A click occured.
     Click(u16, u16),
+
+    /// A holding motion has occured.
+    Hold(u16, u16),
 
     /// Restarts the selected tile.
     Restart,
@@ -426,6 +443,7 @@ pub fn main() -> io::Result<()> {
                     MouseButton::Left => sender.send(Msg::Click(x, y)).unwrap(),
                     _ => (),
                 },
+                Event::Mouse(MouseEvent::Hold(x, y)) => sender.send(Msg::Hold(x, y)).unwrap(),
 
                 _ => {}
             }

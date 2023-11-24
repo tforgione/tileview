@@ -98,6 +98,8 @@ impl TileBuilder {
             column_number: 0,
             pty: None,
             sticky: true,
+            clicked: None,
+            released: None,
         })
     }
 }
@@ -146,6 +148,12 @@ pub struct Tile {
 
     /// Whether the tile should autoscroll.
     pub sticky: bool,
+
+    /// The line and character index that was clicked if any.
+    pub clicked: Option<(usize, usize)>,
+
+    /// The line and character index that has been released, or is currently holding.
+    pub released: Option<(usize, usize)>,
 }
 
 impl Tile {
@@ -404,6 +412,8 @@ impl Tile {
         let mut line_index = scroll;
         let mut last_line_index = line_index;
 
+        let mut inside_selection = false;
+
         buffer.push(format!("{}", cursor::Goto(x, y)));
 
         let mut iter = self
@@ -413,15 +423,15 @@ impl Tile {
             .take(h as usize + 1);
 
         let mut line = iter.next().unwrap();
-        let mut char_iter = line.chars();
+        let mut char_iter = line.chars().enumerate();
 
         loop {
-            let c = match char_iter.next() {
+            let (char_index, c) = match char_iter.next() {
                 Some(c) => c,
                 None => match iter.next() {
                     Some(l) => {
                         line = l;
-                        char_iter = line.chars();
+                        char_iter = line.chars().enumerate();
                         continue;
                     }
                     None => break,
@@ -438,7 +448,7 @@ impl Tile {
                             match iter.next() {
                                 Some(l) => {
                                     line = l;
-                                    char_iter = line.chars();
+                                    char_iter = line.chars().enumerate();
                                     continue;
                                 }
                                 None => break,
@@ -446,9 +456,9 @@ impl Tile {
                         }
                     };
 
-                    subbuffer.push(next);
+                    subbuffer.push(next.1);
 
-                    if next == 'm' || next == 'K' {
+                    if next.1 == 'm' || next.1 == 'K' {
                         break;
                     }
                 }
@@ -478,6 +488,13 @@ impl Tile {
                 }
 
                 continue;
+            }
+
+            let clicked = self.clicked == Some((line_index as usize, char_index));
+            let released = self.released == Some((line_index as usize, char_index));
+
+            if selected && clicked != released {
+                inside_selection = !inside_selection;
             }
 
             match c {
@@ -535,7 +552,12 @@ impl Tile {
                         last_line_index = line_index;
                     }
 
-                    buffer.push(format!("{}", c));
+                    if inside_selection {
+                        eprintln!("{} is inverted", c);
+                        buffer.push(format!("{}{}{}", style::Invert, c, style::NoInvert));
+                    } else {
+                        buffer.push(format!("{}", c));
+                    }
                 }
             }
         }
@@ -706,5 +728,81 @@ impl Tile {
                 ),
             ))
             .unwrap();
+    }
+
+    /// Locates the line and column of a position in the terminal.
+    pub fn locate(&self, (i, j): (u16, u16)) -> (usize, usize) {
+        let (i, j) = (
+            if self.inner_position.0 < i {
+                i - self.inner_position.0
+            } else {
+                0
+            },
+            if self.inner_position.1 < j {
+                j - self.inner_position.1
+            } else {
+                0
+            },
+        );
+
+        let line_index = j as usize + self.scroll as usize;
+        let line_index = line_index.min(self.stdout.len() - 1);
+
+        let line = &self.stdout[line_index];
+
+        // We haven't reached the right column if there are carriage returns remaining
+        let total_carriage_returns = line.chars().filter(|x| *x == '\r').count();
+        let mut carriage_returns = 0;
+
+        // Count the column number
+        let mut counter = 0;
+        let mut current = 0;
+        let mut counting = true;
+
+        for c in line.chars() {
+            if c == '\n' {
+                break;
+            }
+
+            if c == '\x1b' {
+                counting = false;
+            }
+
+            if c == '\r' {
+                carriage_returns += 1;
+                current = 0;
+                counter += 1;
+                continue;
+            }
+
+            if current >= i as usize && total_carriage_returns == carriage_returns {
+                break;
+            }
+
+            if counting {
+                current += 1;
+            }
+
+            counter += 1;
+
+            if c == 'm' || c == 'K' {
+                counting = true;
+            }
+        }
+
+        (line_index, counter)
+    }
+
+    /// Trigerrs a click on a certain position of the terminal.
+    pub fn click(&mut self, (i, j): (u16, u16)) {
+        let (line, column) = self.locate((i, j));
+        self.clicked = Some((line, column));
+        self.released = Some((line, column));
+    }
+
+    /// Trigerrs a cursor motion to a certain position of the terminal.
+    pub fn hold(&mut self, (i, j): (u16, u16)) {
+        let (line, column) = self.locate((i, j));
+        self.released = Some((line, column));
     }
 }
