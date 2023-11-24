@@ -1,6 +1,5 @@
 //! This module contains everything related to tiles.
 
-use std::cmp::Ordering;
 use std::io::Read;
 use std::process::Stdio;
 use std::sync::mpsc::Sender;
@@ -99,8 +98,6 @@ impl TileBuilder {
             column_number: 0,
             pty: None,
             sticky: true,
-            clicked: None,
-            released: None,
         })
     }
 }
@@ -149,12 +146,6 @@ pub struct Tile {
 
     /// Whether the tile should autoscroll.
     pub sticky: bool,
-
-    /// The line and character index that was clicked if any.
-    pub clicked: Option<(usize, usize)>,
-
-    /// The line and character index that has been released, or is currently holding.
-    pub released: Option<(usize, usize)>,
 }
 
 impl Tile {
@@ -413,8 +404,6 @@ impl Tile {
         let mut line_index = scroll;
         let mut last_line_index = line_index;
 
-        let mut inside_selection = false;
-
         buffer.push(format!("{}", cursor::Goto(x, y)));
 
         let mut iter = self
@@ -424,15 +413,15 @@ impl Tile {
             .take(h as usize + 1);
 
         let mut line = iter.next().unwrap();
-        let mut char_iter = line.chars().enumerate();
+        let mut char_iter = line.chars();
 
         loop {
-            let (char_index, c) = match char_iter.next() {
+            let c = match char_iter.next() {
                 Some(c) => c,
                 None => match iter.next() {
                     Some(l) => {
                         line = l;
-                        char_iter = line.chars().enumerate();
+                        char_iter = line.chars();
                         continue;
                     }
                     None => break,
@@ -449,7 +438,7 @@ impl Tile {
                             match iter.next() {
                                 Some(l) => {
                                     line = l;
-                                    char_iter = line.chars().enumerate();
+                                    char_iter = line.chars();
                                     continue;
                                 }
                                 None => break,
@@ -457,9 +446,9 @@ impl Tile {
                         }
                     };
 
-                    subbuffer.push(next.1);
+                    subbuffer.push(next);
 
-                    if next.1 == 'm' || next.1 == 'K' {
+                    if next == 'm' || next == 'K' {
                         break;
                     }
                 }
@@ -489,13 +478,6 @@ impl Tile {
                 }
 
                 continue;
-            }
-
-            let clicked = self.clicked == Some((line_index as usize, char_index));
-            let released = self.released == Some((line_index as usize, char_index));
-
-            if selected && clicked != released {
-                inside_selection = !inside_selection;
             }
 
             match c {
@@ -553,11 +535,7 @@ impl Tile {
                         last_line_index = line_index;
                     }
 
-                    if inside_selection {
-                        buffer.push(format!("{}{}{}", style::Invert, c, style::NoInvert));
-                    } else {
-                        buffer.push(format!("{}", c));
-                    }
+                    buffer.push(format!("{}", c));
                 }
             }
         }
@@ -728,169 +706,5 @@ impl Tile {
                 ),
             ))
             .unwrap();
-    }
-
-    /// Locates the line and column of a position in the terminal.
-    pub fn locate(&self, (i, j): (u16, u16)) -> (usize, usize) {
-        let (i, j) = (
-            if self.inner_position.0 < i {
-                i - self.inner_position.0
-            } else {
-                0
-            },
-            if self.inner_position.1 < j {
-                j - self.inner_position.1
-            } else {
-                0
-            },
-        );
-
-        let line_index = j as usize + self.scroll as usize;
-        let line_index = line_index.min(self.stdout.len() - 1);
-
-        let line = &self.stdout[line_index];
-
-        // We haven't reached the right column if there are carriage returns remaining
-        let total_carriage_returns = line.chars().filter(|x| *x == '\r').count();
-        let mut carriage_returns = 0;
-
-        // Count the column number
-        let mut counter = 0;
-        let mut current = 0;
-        let mut counting = true;
-
-        for c in line.chars() {
-            if c == '\n' {
-                break;
-            }
-
-            if c == '\x1b' {
-                counting = false;
-            }
-
-            if c == '\r' {
-                carriage_returns += 1;
-                current = 0;
-                counter += 1;
-                continue;
-            }
-
-            if current >= i as usize && total_carriage_returns == carriage_returns {
-                break;
-            }
-
-            if counting {
-                current += 1;
-            }
-
-            counter += 1;
-
-            if c == 'm' || c == 'K' {
-                counting = true;
-            }
-        }
-
-        (line_index, counter)
-    }
-
-    /// Trigerrs a click on a certain position of the terminal.
-    pub fn click(&mut self, (i, j): (u16, u16)) {
-        let (line, column) = self.locate((i, j));
-        self.clicked = Some((line, column));
-        self.released = Some((line, column));
-    }
-
-    /// Trigerrs a cursor motion to a certain position of the terminal.
-    pub fn hold(&mut self, (i, j): (u16, u16)) {
-        let (line, column) = self.locate((i, j));
-        self.released = Some((line, column));
-    }
-
-    /// Copies the selection to the clipboard.
-    pub fn copy(&self) {
-        let (clicked, released) = match (self.clicked, self.released) {
-            (Some(a), Some(b)) => (a, b),
-            _ => return,
-        };
-
-        if clicked == released {
-            return;
-        }
-
-        let (line_start, line_end) = if clicked.0 < released.0 {
-            (clicked.0, released.0)
-        } else {
-            (released.0, clicked.0)
-        };
-
-        let (col_start, col_end) = match clicked.0.cmp(&released.0) {
-            Ordering::Less => (clicked.1, released.1),
-            Ordering::Greater => (released.1, clicked.1),
-            Ordering::Equal => {
-                if clicked.1 < released.1 {
-                    (clicked.1, released.1)
-                } else {
-                    (released.1, clicked.1)
-                }
-            }
-        };
-
-        let mut buffers = vec![String::new()];
-        let mut current_buffer = buffers.last_mut().unwrap();
-        let mut counting = true;
-        let mut count = 0;
-
-        let lines = self
-            .stdout
-            .iter()
-            .skip(line_start)
-            .take(line_end - line_start + 1)
-            .enumerate();
-
-        for (line_index, line) in lines {
-            let total_carriage_returns = line.chars().filter(|x| *x == '\r').count();
-            let mut carriage_returns = 0;
-
-            for c in line.chars() {
-                count += 1;
-
-                if c == '\r' {
-                    carriage_returns += 1;
-                }
-
-                if line_index == 0 && count <= col_start {
-                    continue;
-                }
-
-                if c == '\x1b' {
-                    counting = false;
-                }
-
-                if counting {
-                    match c {
-                        '\r' => current_buffer.clear(),
-                        '\n' => {
-                            count = 0;
-                            buffers.push(String::new());
-                            current_buffer = buffers.last_mut().unwrap();
-                        }
-                        _ => current_buffer.push(c),
-                    }
-                }
-
-                if c == 'm' || c == 'K' {
-                    counting = true;
-                }
-
-                if carriage_returns == total_carriage_returns
-                    && line_index == line_end - line_start
-                    && count == col_end
-                {
-                    break;
-                }
-            }
-        }
-
-        // TODO manage to copy the string to the clipboard
     }
 }

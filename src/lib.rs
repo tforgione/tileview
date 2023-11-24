@@ -234,25 +234,6 @@ impl<W: Write> Multiview<W> {
         }
     }
 
-    /// Triggers a click on a certain character.
-    pub fn click(&mut self, (i, j): (u16, u16)) {
-        self.select_tile((i, j));
-        let tile = self.tile_mut(self.selected);
-        tile.click((i, j));
-    }
-
-    /// Triggers a motion on a certain character.
-    pub fn hold(&mut self, (i, j): (u16, u16)) {
-        let tile = self.tile_mut(self.selected);
-        tile.hold((i, j));
-    }
-
-    /// Copies the current selection to the clipboard.
-    pub fn copy(&self) {
-        let tile = self.tile(self.selected);
-        tile.copy();
-    }
-
     /// Treats a message.
     pub fn manage_msg(&mut self, msg: Msg) -> io::Result<()> {
         self.refresh_tiles = true;
@@ -260,8 +241,7 @@ impl<W: Write> Multiview<W> {
         match msg {
             Msg::Stdout(coords, line) => self.push_stdout(coords, line),
             Msg::Stderr(coords, line) => self.push_stderr(coords, line),
-            Msg::Click(x, y) => self.click((x, y)),
-            Msg::Hold(x, y) => self.hold((x, y)),
+            Msg::Click(x, y) => self.select_tile((x, y)),
             Msg::Restart => self.restart(),
             Msg::RestartAll => self.restart_all(),
             Msg::Kill => self.kill(),
@@ -273,7 +253,6 @@ impl<W: Write> Multiview<W> {
             Msg::AddLine => self.add_line(),
             Msg::AddLineAll => self.add_line_all(),
             Msg::AddFinishLine(coords, success) => self.add_finish_line(coords, success),
-            Msg::Copy => self.copy(),
             Msg::Exit => self.exit(),
         }
 
@@ -298,9 +277,6 @@ pub enum Msg {
 
     /// A click occured.
     Click(u16, u16),
-
-    /// A holding motion has occured.
-    Hold(u16, u16),
 
     /// Restarts the selected tile.
     Restart,
@@ -334,9 +310,6 @@ pub enum Msg {
 
     /// Adds the finish line to the tile.
     AddFinishLine((u16, u16), bool),
-
-    /// Copies the selection to the clipboard.
-    Copy,
 
     /// The program was asked to exit.
     Exit,
@@ -437,7 +410,6 @@ pub fn main() -> io::Result<()> {
                 Event::Key(Key::Esc) | Event::Key(Key::Ctrl('c')) | Event::Key(Key::Char('q')) => {
                     sender.send(Msg::Exit).unwrap()
                 }
-                Event::Key(Key::Char('y')) => sender.send(Msg::Copy).unwrap(),
                 Event::Key(Key::Char('r')) => sender.send(Msg::Restart).unwrap(),
                 Event::Key(Key::Char('R')) => sender.send(Msg::RestartAll).unwrap(),
                 Event::Key(Key::Char('k')) => sender.send(Msg::Kill).unwrap(),
@@ -454,7 +426,6 @@ pub fn main() -> io::Result<()> {
                     MouseButton::Left => sender.send(Msg::Click(x, y)).unwrap(),
                     _ => (),
                 },
-                Event::Mouse(MouseEvent::Hold(x, y)) => sender.send(Msg::Hold(x, y)).unwrap(),
 
                 _ => {}
             }
